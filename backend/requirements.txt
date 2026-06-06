@@ -1,0 +1,12 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+aiofiles==24.1.0
+pydantic==2.11.1
+
+# GSTONE dependencies (already installed in the GSTONE venv)
+# Listed here for reference / fresh-env setup
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.1
+PyYAML>=6.0
