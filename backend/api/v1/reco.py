@@ -15,14 +15,81 @@ from config import UPLOAD_DIR
 from models.requests import RecoRunRequest
 from models.responses import (
     ApiResponse, RecoUploadResponse, CanonicalSummary,
-    RecoRunResponse, RecoResultsResponse, MatchResultRow,
+    RecoRunResponse, RecoResultsResponse, MatchResultRow, RecoBooksWorkbookResponse,
 )
 import session_store as store
 from services import reco_service
 
 router = APIRouter(prefix="/reco", tags=["Reconciliation"])
 
-ALLOWED_2B_EXTENSIONS = {".json", ".xlsx", ".xls"}
+ALLOWED_2B_EXTENSIONS = {".json", ".xlsx"}
+ALLOWED_BOOK_WORKBOOK_EXTENSIONS = {".xlsx"}
+
+
+@router.post("/books-workbook", summary="Upload an approved clean-books workbook for 2B handoff")
+async def upload_books_workbook(
+    file: UploadFile = File(...),
+    entity_id: str = Form(...),
+    period: str = Form(...),
+):
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_BOOK_WORKBOOK_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported workbook type: '{ext}'")
+
+    upload_id = f"BOOKS_{uuid.uuid4().hex[:8].upper()}"
+    dest_path = UPLOAD_DIR / f"{upload_id}{ext}"
+    async with aiofiles.open(dest_path, "wb") as out:
+        await out.write(await file.read())
+
+    try:
+        from core.reco_2b.exported_book_ingestor import ExportedBookIngestor
+
+        ingested = ExportedBookIngestor.ingest_workbook(str(dest_path))
+        ingested_run_id = (ingested.get("parent_run_id") or "").strip()
+        if not ingested_run_id or ingested_run_id.upper() in {"PENDING_APPROVAL", "UNKNOWN", "RESUMED_RUN"}:
+            run_id = f"BOOKS_{uuid.uuid4().hex[:8].upper()}"
+        else:
+            run_id = ingested_run_id
+        business_context = ingested.get("business_context") or "default"
+        invoices = ingested.get("invoices", [])
+
+        run = store.get_run(run_id)
+        if not run:
+            run = store.RunSession(
+                run_id=run_id,
+                status="approved",
+                entity_id=entity_id,
+                period=period,
+                business_context=business_context,
+                company_gstins=[],
+                garden_assignments=[],
+                garden_files=[],
+                col_map={},
+                file_ids=[],
+                result=None,
+                handoff_workbook_path=str(dest_path),
+                handoff_workbook_name=file.filename,
+                handoff_source="uploaded_workbook",
+            )
+            store.runs[run_id] = run
+        else:
+            run.status = "approved"
+            run.entity_id = run.entity_id or entity_id
+            run.period = run.period or period
+            run.business_context = business_context or run.business_context
+            run.handoff_workbook_path = str(dest_path)
+            run.handoff_workbook_name = file.filename
+            run.handoff_source = "uploaded_workbook"
+
+        return ApiResponse.ok(RecoBooksWorkbookResponse(
+            run_id=run_id,
+            status=run.status,
+            business_context=run.business_context,
+            source_file=file.filename,
+            invoice_count=len(invoices),
+        ).model_dump())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/upload", summary="Upload GSTR-2B file(s)")
@@ -65,7 +132,22 @@ async def upload_2b(
     except Exception as exc:
         store.recos[reco_id].status = "failed"
         store.recos[reco_id].error = str(exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        detail = str(exc)
+        status_code = 500
+        lowered = detail.lower()
+        if any(token in lowered for token in [
+            "cannot find b2b data sheet",
+            "missing required columns",
+            "cannot detect header row",
+            "cannot open excel file",
+            "file is not a zip file",
+            "unsupported format",
+            "openpyxl is not installed",
+            "2b ingestion failed",
+            "no adapter available",
+        ]):
+            status_code = 400
+        raise HTTPException(status_code=status_code, detail=detail)
 
     return ApiResponse.ok(RecoUploadResponse(
         reco_id=reco_id,
@@ -128,14 +210,52 @@ async def get_reco_results(
     unmatched_2b = (reco.match_results or {}).get("unmatched_2b", [])
     total_books = (reco.match_results or {}).get("total_books", 0)
     total_2b = (reco.match_results or {}).get("total_2b", 0)
+    from core.reco_2b.models import Canonical2BInvoice
+
+    canonical_by_identity = {}
+    for raw_invoice in (reco.canonical_invoices or []):
+        try:
+            canonical_invoice = Canonical2BInvoice.from_dict(raw_invoice)
+            canonical_by_identity[canonical_invoice.get_identity_key_string()] = raw_invoice
+        except Exception:
+            continue
+    missing_in_books_rows = []
+    for identity_key in unmatched_2b:
+        canonical_invoice = canonical_by_identity.get(identity_key)
+        if not canonical_invoice:
+            continue
+        missing_in_books_rows.append({
+            "books_invoice_id": identity_key,
+            "match_status": "MISSING_IN_BOOKS",
+            "match_method": None,
+            "matched_2b_invoice_id": identity_key,
+            "books_supplier_gstin": None,
+            "books_supplier_name": None,
+            "books_invoice_number": None,
+            "books_invoice_date": None,
+            "books_taxable_value": None,
+            "books_total_gst": None,
+            "books_invoice_value": None,
+            "canonical_supplier_gstin": canonical_invoice.get("supplier_gstin"),
+            "canonical_supplier_name": canonical_invoice.get("supplier_legal_name"),
+            "canonical_invoice_number": canonical_invoice.get("invoice_number"),
+            "canonical_invoice_date": canonical_invoice.get("invoice_date"),
+            "canonical_taxable_value": canonical_invoice.get("taxable_value"),
+            "canonical_total_gst": canonical_invoice.get("total_gst_amount"),
+            "canonical_invoice_value": canonical_invoice.get("invoice_value"),
+            "candidate_count": 0,
+            "value_deltas": [],
+            "mismatch_reasons": [],
+        })
+    all_rows = [*match_results, *missing_in_books_rows]
 
     # Optional status filter
     if status:
-        match_results = [r for r in match_results if r.get("match_status") == status]
+        all_rows = [r for r in all_rows if r.get("match_status") == status]
 
-    total = len(match_results)
+    total = len(all_rows)
     start = (page - 1) * limit
-    paged = match_results[start:start + limit]
+    paged = all_rows[start:start + limit]
 
     return ApiResponse.ok(RecoResultsResponse(
         reco_id=reco_id,
@@ -147,3 +267,25 @@ async def get_reco_results(
         results=[MatchResultRow(**r) for r in paged],
         unmatched_2b_count=len(unmatched_2b),
     ).model_dump())
+
+
+@router.get("/{reco_id}/export", summary="Export reconciliation results to Excel workbook")
+async def export_reco_results(reco_id: str):
+    reco = store.get_reco(reco_id)
+    if not reco:
+        raise HTTPException(status_code=404, detail=f"reco_id '{reco_id}' not found")
+    if reco.status != "complete":
+        raise HTTPException(status_code=400, detail=f"Cannot export results, reco status is: {reco.status}")
+
+    try:
+        from fastapi.responses import FileResponse
+        temp_file_path = await reco_service.export_reco_results_workbook(reco_id)
+        
+        filename = f"Reco_Results_{reco_id}.xlsx"
+        return FileResponse(
+            path=temp_file_path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

@@ -17,13 +17,32 @@ from models.responses import (
     InvoiceListResponse, InvoiceRow, SuggestionPayload,
 )
 import session_store as store
-import database
 from services import pipeline_service
+import uuid
 
 router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
 
 
 from fastapi.responses import StreamingResponse
+
+
+def _build_handoff_payload(run_id: str, status: str) -> dict:
+    run = store.get_run(run_id)
+    latest_export = store.get_latest_export_for_run(run_id)
+    approved_export = store.get_latest_export_for_run(run_id, approved_only=True)
+    workbook_name = run.handoff_workbook_name if run and run.handoff_workbook_name else None
+    workbook_source = run.handoff_source if run and run.handoff_source else None
+    has_uploaded_workbook = bool(run and run.handoff_workbook_path)
+    return {
+        "run_status": status,
+        "has_export": latest_export is not None,
+        "has_approved_export": approved_export is not None,
+        "has_uploaded_workbook": has_uploaded_workbook,
+        "export_id": approved_export.export_id if approved_export else (latest_export.export_id if latest_export else None),
+        "export_file_name": workbook_name or (approved_export.file_name if approved_export else (latest_export.file_name if latest_export else None)),
+        "source": workbook_source or ("approved_export" if approved_export else None),
+        "ready_for_reconciliation": status == "approved" and (has_uploaded_workbook or approved_export is not None),
+    }
 
 @router.post("/run", summary="Start a pipeline run (single or multi-garden)")
 async def run_pipeline(request: PipelineRunRequest):
@@ -62,6 +81,7 @@ async def get_latest_sandbox_run(
         "period": run.period,
         "business_context": run.business_context,
         "status": run.status,
+        "handoff": _build_handoff_payload(run.run_id, run.status),
         "summary": result.get("summary") if result else None,
         "results": normalized_results,
         "fixes": run.fix_actions,
@@ -93,7 +113,9 @@ async def get_run_status(run_id: str):
         error=run.error,
         created_at=run.created_at,
     )
-    return ApiResponse.ok(response.model_dump())
+    payload = response.model_dump()
+    payload["handoff"] = _build_handoff_payload(run_id, run.status)
+    return ApiResponse.ok(payload)
 
 
 @router.get("/{run_id}/errors", summary="Get identity and aggregation errors with suggestions")
@@ -234,7 +256,7 @@ async def submit_fixes(run_id: str, request: SubmitFixesRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/finalize", summary="Certify the active sandbox run into SQLite")
+@router.post("/finalize", summary="Certify the active sandbox run in session memory")
 async def finalize_audit(request: FinalizeAuditRequest):
     if not request.entity_id or not request.period:
         raise HTTPException(status_code=400, detail="entity_id and period are required")
@@ -245,14 +267,31 @@ async def finalize_audit(request: FinalizeAuditRequest):
     results_payload = run.result if run and run.result else request.results
     fixes_payload = run.fix_actions if run and run.fix_actions else [fix.model_dump() for fix in request.fixes]
 
-    record = database.finalize_run(
+    certification_id = f"CERT_{uuid.uuid4().hex[:8].upper()}"
+    record = store.CertifiedRun(
+        certification_id=certification_id,
+        run_id=request.run_id or certification_id,
         entity_id=request.entity_id,
         period=request.period,
-        run_id=request.run_id,
         business_context=business_context,
-        summary=summary_payload,
-        results=results_payload,
-        fixes=fixes_payload,
+        summary=summary_payload or {},
+        results=results_payload or {},
+        fixes=fixes_payload or [],
     )
+    store.certified_runs[certification_id] = record
 
-    return ApiResponse.ok(record)
+    if run:
+        run.status = "complete"
+
+    return ApiResponse.ok({
+        "certification_id": record.certification_id,
+        "run_id": record.run_id,
+        "entity_id": record.entity_id,
+        "period": record.period,
+        "business_context": record.business_context,
+        "status": record.status,
+        "summary": record.summary,
+        "results": record.results,
+        "fixes": record.fixes,
+        "certified_at": record.certified_at,
+    })

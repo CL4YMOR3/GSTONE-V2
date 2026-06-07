@@ -309,6 +309,19 @@ export const api = {
     return unwrapResponse(response, 'Failed to upload 2B files');
   },
 
+  uploadBooksWorkbook: async (file, entityId, period) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('entity_id', entityId);
+    formData.append('period', period);
+
+    const response = await fetch(`${API_BASE_URL}/reco/books-workbook`, {
+      method: 'POST',
+      body: formData,
+    });
+    return unwrapResponse(response, 'Failed to upload clean books workbook');
+  },
+
   getRecoCanonical: async (recoId) => {
     const response = await fetch(`${API_BASE_URL}/reco/${recoId}/canonical`);
     return unwrapResponse(response, 'Failed to fetch canonical 2B summary');
@@ -333,6 +346,25 @@ export const api = {
       limit: options.limit || 1000,
     })}`);
     return unwrapResponse(response, 'Failed to fetch reconciliation results');
+  },
+
+  downloadRecoResultsExport: async (recoId, fallbackFileName = 'gstr_2b_reconciliation.xlsx') => {
+    const response = await fetch(`${API_BASE_URL}/reco/${recoId}/export`);
+    if (!response.ok) {
+      let detail = 'Failed to download reconciliation workbook';
+      try {
+        const errorPayload = await response.json();
+        detail = errorPayload.detail || errorPayload.error?.message || detail;
+      } catch {
+        detail = 'Failed to download reconciliation workbook';
+      }
+      throw new Error(detail);
+    }
+
+    const blob = await response.blob();
+    const fileName = getDownloadFileName(response, fallbackFileName);
+    triggerBrowserDownload(blob, fileName);
+    return fileName;
   },
 
   searchVendors: async (query, context, limit = 20) => {

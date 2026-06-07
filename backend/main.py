@@ -21,7 +21,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import UPLOAD_DIR, EXPORT_DIR, RECO_STORAGE_DIR, CORS_ORIGINS
-import database
 from api.v1 import context, upload, mapping, pipeline, export, vendor, reco, queries
 
 
@@ -33,7 +32,6 @@ async def lifespan(app: FastAPI):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     RECO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    database.init_db()
     print(f"[*] GSTONE path: {_GSTONE_DIR}")
     print(f"[*] Upload dir:  {UPLOAD_DIR}")
     print(f"[*] Export dir:  {EXPORT_DIR}")
@@ -53,6 +51,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

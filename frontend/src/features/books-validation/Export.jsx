@@ -20,7 +20,9 @@ export const Export = () => {
    const {
       currentRunId,
       currentExportId,
+      currentExportApproved,
       setCurrentExportId,
+      setCurrentExportApproved,
       setActiveStep,
       businessContext,
       currentAuditResults,
@@ -56,6 +58,7 @@ export const Export = () => {
       try {
          const exportData = await api.createExport(currentRunId);
          setCurrentExportId(exportData.export_id);
+         setCurrentExportApproved(false);
          setExportMeta(exportData);
          setMessage(`Workbook prepared: ${exportData.file_name}`);
          return exportData.export_id;
@@ -79,6 +82,7 @@ export const Export = () => {
          const exportId = await ensureExport();
          setIsApproving(true);
          await api.approveExport(exportId);
+         setCurrentExportApproved(true);
          setMessage('Certified workbook approved and locked.');
       } catch (error) {
          setMessage(error.message || 'Failed to approve workbook.');
@@ -120,7 +124,7 @@ export const Export = () => {
                
                <div className="flex items-center gap-3 self-start xl:self-auto">
                   <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Compliance</span>
-                  {currentExportId ? (
+                  {currentExportApproved ? (
                      <div className="flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-100 px-3 py-1.5 text-brand-emerald">
                         <Lock className="w-3.5 h-3.5" />
                         <span className="text-[10px] font-black uppercase tracking-widest">Locked</span>
@@ -140,7 +144,7 @@ export const Export = () => {
             {[
                { label: 'Completion', value: '100%', accent: 'bg-brand-emerald', valueTone: 'text-brand-emerald' },
                { label: 'Exported Records', value: auditRecordCount, accent: 'bg-stone-300', valueTone: 'text-stone-900' },
-               { label: 'Sign-off Status', value: currentExportId ? 'Approved' : 'Pending', accent: currentExportId ? 'bg-brand-emerald' : 'bg-amber-500', valueTone: currentExportId ? 'text-brand-emerald' : 'text-amber-500' },
+               { label: 'Sign-off Status', value: currentExportApproved ? 'Approved' : 'Pending', accent: currentExportApproved ? 'bg-brand-emerald' : 'bg-amber-500', valueTone: currentExportApproved ? 'text-brand-emerald' : 'text-amber-500' },
             ].map((item) => (
                <div key={item.label} className="app-kpi-card p-6">
                   <div className="flex items-center justify-between gap-3">
@@ -189,7 +193,7 @@ export const Export = () => {
                         disabled={isApproving || isGenerating}
                         className="app-button-secondary w-full py-4 disabled:opacity-50"
                      >
-                        {isApproving ? <span className="inline-flex items-center gap-2"><Spinner size="sm" /> Approving...</span> : (currentExportId ? 'Approve & Lock Export' : 'Prepare and Approve')}
+                        {isApproving ? <span className="inline-flex items-center gap-2"><Spinner size="sm" /> Approving...</span> : (currentExportApproved ? 'Export Approved' : currentExportId ? 'Approve & Lock Export' : 'Prepare and Approve')}
                      </button>
                      <p className="text-center text-[9px] font-bold text-stone-300 uppercase tracking-tighter">Workbook downloads from the saved review</p>
                      {message && <p className="text-center text-[10px] font-bold text-stone-500">{message}</p>}
@@ -241,10 +245,11 @@ export const Export = () => {
                   </button>
                   <button
                      onClick={() => {
-                        resetPipeline();
                         navigate('/2b-reconciliation');
                      }}
-                     className="app-button-primary px-8 py-3.5 group"
+                     disabled={!currentExportApproved}
+                     title={!currentExportApproved ? 'Approve the exported workbook to unlock GSTR-2B reconciliation.' : undefined}
+                     className={`px-8 py-3.5 group ${currentExportApproved ? 'app-button-primary' : 'app-button-primary opacity-50 cursor-not-allowed'}`}
                   >
                      Proceed to 2B Reconciliation
                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />

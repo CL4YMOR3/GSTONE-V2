@@ -72,7 +72,7 @@ function App() {
           {/* Settings Routes */}
           <Route path="/settings/entities" element={<EntityManagement />} />
 
-          {/* Secondary Views (SQLite Backed) */}
+          {/* Secondary Views */}
           <Route path="/history" element={<AuditHistoryPlaceholder />} />
           <Route path="/directory" element={<VendorDirectory />} />
           {/* Fallback */}

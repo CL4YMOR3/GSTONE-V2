@@ -10,7 +10,6 @@ from fastapi.responses import FileResponse
 from models.requests import ExportRequest
 from models.responses import ApiResponse, ExportResponse, ApproveResponse
 import session_store as store
-import database
 from services.export_service import generate_export
 
 router = APIRouter(tags=["Export"])
@@ -19,7 +18,7 @@ router = APIRouter(tags=["Export"])
 @router.post("/pipeline/{run_id}/export", summary="Generate 5-sheet validation workbook")
 async def create_export(run_id: str, request: ExportRequest = None):
     run = store.get_run(run_id)
-    certification = database.get_certified_by_run_id(run_id)
+    certification = store.get_certified_by_run_id(run_id)
     if not run and not certification:
         raise HTTPException(status_code=404, detail=f"run_id '{run_id}' not found")
     if run and run.status not in ("complete", "approved"):
@@ -61,7 +60,6 @@ async def approve_export(export_id: str):
         raise HTTPException(status_code=404, detail=f"export_id '{export_id}' not found")
 
     record.approved = True
-    database.mark_export_approved(export_id)
 
     # Also mark run as approved
     run = store.get_run(record.run_id)

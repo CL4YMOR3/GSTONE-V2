@@ -42,7 +42,7 @@ export const HomeDashboard = () => {
       title: '2B Reconciliation',
       description: 'Match your books against GSTR-2B data with identity-first reconciliation logic.',
       icon: ArrowRightLeft,
-      stats: 'SQLite Optimized',
+      stats: 'Legacy-aligned',
       color: 'blue',
       gradient: 'from-blue-500 to-blue-600'
     },

@@ -11,6 +11,7 @@ const DEFAULT_INSTANCE_STATE = {
   currentRunId: null,
   currentRecoId: null,
   currentExportId: null,
+  currentExportApproved: false,
   currentAuditResults: { summary: null, col_map: {}, clean: [], warnings: [], errors: [] },
 };
 
@@ -36,6 +37,7 @@ export const useAppStore = create((set, get) => ({
   currentRunId: null,
   currentRecoId: null,
   currentExportId: null,
+  currentExportApproved: false,
   currentAuditResults: { summary: null, col_map: {}, clean: [], warnings: [], errors: [] },
 
   setUploadedBooksFiles: (filesOrUpdater) => set((state) => {
@@ -79,6 +81,12 @@ export const useAppStore = create((set, get) => ({
 
   setCurrentExportId: (exportId) => set(() => {
     const newState = { currentExportId: exportId };
+    get().syncToInstance(newState);
+    return newState;
+  }),
+
+  setCurrentExportApproved: (approved) => set(() => {
+    const newState = { currentExportApproved: approved };
     get().syncToInstance(newState);
     return newState;
   }),
@@ -134,6 +142,7 @@ export const useAppStore = create((set, get) => ({
       currentRunId: null,
       currentRecoId: null,
       currentExportId: null,
+      currentExportApproved: false,
       currentAuditResults: { summary: null, col_map: {}, clean: [], warnings: [], errors: [] },
       activeStep: 1,
     };
@@ -176,6 +185,7 @@ export const useAppStore = create((set, get) => ({
       currentRunId: state.currentRunId,
       currentRecoId: state.currentRecoId,
       currentExportId: state.currentExportId,
+      currentExportApproved: state.currentExportApproved,
       currentAuditResults: state.currentAuditResults,
     };
 

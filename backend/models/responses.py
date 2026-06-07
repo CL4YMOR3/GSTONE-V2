@@ -211,6 +211,14 @@ class RecoUploadResponse(BaseModel):
     status: str
 
 
+class RecoBooksWorkbookResponse(BaseModel):
+    run_id: str
+    status: str
+    business_context: str
+    source_file: str
+    invoice_count: int
+
+
 class CanonicalSummary(BaseModel):
     reco_id: str
     invoice_count: int
@@ -230,6 +238,21 @@ class MatchResultRow(BaseModel):
     match_status: str           # MATCHED_STRICT | VALUE_MISMATCH | MISSING_IN_2B | ...
     match_method: Optional[str]
     matched_2b_invoice_id: Optional[str]
+    books_supplier_gstin: Optional[str] = None
+    books_supplier_name: Optional[str] = None
+    books_invoice_number: Optional[str] = None
+    books_invoice_date: Optional[str] = None
+    books_taxable_value: Optional[float] = None
+    books_total_gst: Optional[float] = None
+    books_invoice_value: Optional[float] = None
+    canonical_supplier_gstin: Optional[str] = None
+    canonical_supplier_name: Optional[str] = None
+    canonical_invoice_number: Optional[str] = None
+    canonical_invoice_date: Optional[str] = None
+    canonical_taxable_value: Optional[float] = None
+    canonical_total_gst: Optional[float] = None
+    canonical_invoice_value: Optional[float] = None
+    candidate_count: int = 0
     value_deltas: List[Dict[str, Any]] = []
     mismatch_reasons: List[str] = []
 

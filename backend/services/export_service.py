@@ -15,7 +15,6 @@ import pandas as pd
 
 from config import EXPORT_DIR, MAX_PIPELINE_WORKERS
 import session_store as store
-import database
 
 _executor = ThreadPoolExecutor(max_workers=MAX_PIPELINE_WORKERS)
 
@@ -170,12 +169,12 @@ async def generate_export(run_id: str) -> store.ExportRecord:
             raise ValueError(f"Run '{run_id}' is not complete (status: {run.status})")
         result_payload = run.result
     else:
-        certification = database.get_certified_by_run_id(run_id)
+        certification = store.get_certified_by_run_id(run_id)
         if not certification:
             raise ValueError(f"Run '{run_id}' not found")
-        result_payload = _restore_certified_result_shape(certification["results"])
-        result_payload["summary"] = certification["summary"]
-        result_payload["manual_fixes"] = certification["fixes"]
+        result_payload = _restore_certified_result_shape(certification.results)
+        result_payload["summary"] = certification.summary
+        result_payload["manual_fixes"] = certification.fixes
 
     export_id = f"EXP_{uuid.uuid4().hex[:8].upper()}"
     file_name = f"gst_validation_{run_id}_{export_id}.xlsx"
@@ -191,14 +190,7 @@ async def generate_export(run_id: str) -> store.ExportRecord:
         run_id=run_id,
         file_path=file_path,
         file_name=file_name,
+        certification_id=certification.certification_id if certification else None,
     )
     store.exports[export_id] = record
-    database.create_export_record(
-        export_id=export_id,
-        run_id=run_id,
-        certification_id=certification["certification_id"] if certification else None,
-        file_name=file_name,
-        file_path=file_path,
-        approved=False,
-    )
     return record, file_size
