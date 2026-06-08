@@ -18,11 +18,11 @@ import { api } from '../../services/api';
 import { Spinner } from '../../components/Spinner';
 
 const TAB_DEFS = [
-  { id: 'books_pending', label: 'Books Pending', icon: AlertCircle },
-  { id: 'books_clean', label: 'Books Clean', icon: CheckCircle2 },
-  { id: 'matched', label: 'Matched', icon: ShieldCheck },
-  { id: 'missing_in_books', label: 'Missing In Books', icon: Database },
-  { id: 'reco_pending', label: 'Missing In 2B', icon: AlertCircle },
+  { id: 'books_pending', label: 'Books Pending', icon: AlertCircle, colorClasses: 'border-amber-200 bg-amber-50 text-amber-900', activeIcon: 'text-amber-600' },
+  { id: 'books_clean', label: 'Books Clean', icon: CheckCircle2, colorClasses: 'border-emerald-200 bg-emerald-50 text-brand-forest', activeIcon: 'text-brand-forest' },
+  { id: 'matched', label: 'Matched', icon: ShieldCheck, colorClasses: 'border-emerald-200 bg-emerald-50 text-brand-forest', activeIcon: 'text-brand-forest' },
+  { id: 'missing_in_books', label: 'Missing In Books', icon: Database, colorClasses: 'border-sky-200 bg-sky-50 text-sky-900', activeIcon: 'text-sky-600' },
+  { id: 'reco_pending', label: 'Missing In 2B', icon: AlertCircle, colorClasses: 'border-rose-200 bg-rose-50 text-rose-900', activeIcon: 'text-rose-600' },
 ];
 
 const SORT_OPTIONS = [
@@ -579,13 +579,13 @@ export const LedgerReports = () => {
                   onClick={() => setActiveTab(tab.id)}
                   className={`rounded-[18px] border px-3 py-2.5 text-left transition-all ${
                     active
-                      ? 'border-stone-200 bg-stone-50 text-stone-950 shadow-sm'
+                      ? `${tab.colorClasses} shadow-sm`
                       : 'border-transparent bg-transparent text-stone-500 hover:bg-stone-50 hover:text-stone-900'
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <tab.icon className={`h-4 w-4 ${active ? 'text-brand-forest' : 'text-stone-400'}`} />
-                    <span className="text-[10px] font-black uppercase tracking-widest">{tab.label}</span>
+                    <tab.icon className={`h-4 w-4 ${active ? tab.activeIcon : 'text-stone-400'}`} />
+                    <span className="text-[10px] font-black uppercase tracking-widest opacity-80">{tab.label}</span>
                   </div>
                   <div className="mt-1 flex items-baseline gap-2">
                     <span className="text-xl font-bold tracking-tight">{count}</span>
