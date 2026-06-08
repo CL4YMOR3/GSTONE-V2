@@ -12,16 +12,19 @@ import {
   ShieldCheck,
   TrendingUp,
   X,
+  Target,
+  TrendingDown,
+  LayoutGrid,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { api } from '../../services/api';
 import { Spinner } from '../../components/Spinner';
 
 const TAB_DEFS = [
-  { id: 'books_pending', label: 'Books Pending', icon: AlertCircle, colorClasses: 'border-amber-200 bg-amber-50 text-amber-900', activeIcon: 'text-amber-600' },
+  { id: 'books_pending', label: 'Books Pending', icon: TrendingDown, colorClasses: 'border-amber-200 bg-amber-50 text-amber-900', activeIcon: 'text-amber-600' },
   { id: 'books_clean', label: 'Books Clean', icon: CheckCircle2, colorClasses: 'border-emerald-200 bg-emerald-50 text-brand-forest', activeIcon: 'text-brand-forest' },
-  { id: 'matched', label: 'Matched', icon: ShieldCheck, colorClasses: 'border-emerald-200 bg-emerald-50 text-brand-forest', activeIcon: 'text-brand-forest' },
-  { id: 'missing_in_books', label: 'Missing In Books', icon: Database, colorClasses: 'border-sky-200 bg-sky-50 text-sky-900', activeIcon: 'text-sky-600' },
+  { id: 'matched', label: 'Matched', icon: Target, colorClasses: 'border-emerald-200 bg-emerald-50 text-brand-forest', activeIcon: 'text-brand-forest' },
+  { id: 'missing_in_books', label: 'Missing In Books', icon: LayoutGrid, colorClasses: 'border-sky-200 bg-sky-50 text-sky-900', activeIcon: 'text-sky-600' },
   { id: 'reco_pending', label: 'Missing In 2B', icon: AlertCircle, colorClasses: 'border-rose-200 bg-rose-50 text-rose-900', activeIcon: 'text-rose-600' },
 ];
 
@@ -537,30 +540,30 @@ export const LedgerReports = () => {
             </label>
           </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-col gap-3 sm:flex-row">
-            <label className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-3 py-2 shadow-sm">
-              <Search className="h-4 w-4 text-stone-400" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search invoice, GSTIN, vendor..."
-                className="w-full bg-transparent text-sm font-medium text-stone-700 outline-none placeholder:text-stone-400 sm:w-72"
-              />
-            </label>
-            <label className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-3 py-2 shadow-sm">
-              <Filter className="h-4 w-4 text-stone-400" />
-              <select
-                value={sortBy}
-                onChange={(event) => setSortBy(event.target.value)}
-                className="bg-transparent text-sm font-medium text-stone-700 outline-none"
-              >
-                {SORT_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-              </select>
-            </label>
+            <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-[70%]">
+              <label className="flex flex-1 items-center gap-2 rounded-[24px] border border-stone-200 bg-white px-4 py-3 shadow-sm">
+                <Search className="h-4 w-4 text-stone-400 shrink-0" />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search invoice, GSTIN, vendor..."
+                  className="w-full bg-transparent text-sm font-medium text-stone-700 outline-none placeholder:text-stone-400"
+                />
+              </label>
+              <label className="flex w-full items-center gap-2 rounded-[24px] border border-stone-200 bg-white px-4 py-3 shadow-sm sm:w-64">
+                <Filter className="h-4 w-4 text-stone-400 shrink-0" />
+                <select
+                  value={sortBy}
+                  onChange={(event) => setSortBy(event.target.value)}
+                  className="w-full bg-transparent text-sm font-medium text-stone-700 outline-none"
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
             </div>
-            <div className="text-[11px] font-semibold text-stone-500">
+            <div className="text-[11px] font-semibold text-stone-500 whitespace-nowrap">
               {filteredRows.length} visible row{filteredRows.length === 1 ? '' : 's'} in the current ledger view
             </div>
           </div>
