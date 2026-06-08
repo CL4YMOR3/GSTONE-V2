@@ -507,7 +507,7 @@ async def _start_run_stream_with_sources(request: PipelineRunRequest, garden_fil
     try:
         fix_actions_raw = [fa.model_dump() for fa in request.fix_actions]
         
-        store.runs[run_id] = store.RunSession(
+        store.save_run(store.RunSession(
             run_id=run_id,
             status="running",
             entity_id=request.entity_id,
@@ -519,7 +519,7 @@ async def _start_run_stream_with_sources(request: PipelineRunRequest, garden_fil
             col_map=request.col_map,
             file_ids=request.file_ids,
             fix_actions=fix_actions_raw,
-        )
+        ))
     except Exception as e:
         yield f"data: {json.dumps({'status': 'Error', 'message': f'Initialization failed: {str(e)}'})}\n\n"
         return
@@ -557,8 +557,10 @@ async def _start_run_stream_with_sources(request: PipelineRunRequest, garden_fil
 
     try:
         result = task.result()
-        store.runs[run_id].result = result
-        store.runs[run_id].status = "complete"
+        run_session = store.get_run(run_id)
+        run_session.result = result
+        run_session.status = "complete"
+        store.save_run(run_session)
         
         # 🏛️ STAGE 1: Yield Lightweight Summary (Immediate KPI update)
         summary_payload = {
@@ -591,11 +593,15 @@ async def _start_run_stream_with_sources(request: PipelineRunRequest, garden_fil
     except Exception as exc:
         # If the core pipeline already completed and only SSE egress failed,
         # preserve the successful run for UI recovery/polling.
-        if run_id in store.runs and store.runs[run_id].result is not None:
-            store.runs[run_id].error = str(exc)
+        run_session = store.get_run(run_id)
+        if run_session and run_session.result is not None:
+            run_session.error = str(exc)
+            store.save_run(run_session)
         else:
-            store.runs[run_id].status = "failed"
-            store.runs[run_id].error = str(exc)
+            if run_session:
+                run_session.status = "failed"
+                run_session.error = str(exc)
+                store.save_run(run_session)
         yield f"data: {json.dumps({'step': 100, 'total': 100, 'status': 'Error', 'message': f'Engine Fault: {str(exc)}', 'run_id': run_id})}\n\n"
 
 

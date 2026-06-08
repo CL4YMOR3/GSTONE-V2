@@ -11,6 +11,7 @@ GSTONE_DIR = PROJECT_ROOT / "GSTONE"
 UPLOAD_DIR = BACKEND_DIR / "data" / "uploads"
 EXPORT_DIR = BACKEND_DIR / "data" / "exports"
 RECO_STORAGE_DIR = BACKEND_DIR / "data" / "2b_raws"
+SQLITE_DB_PATH = BACKEND_DIR / "data" / "gst_one_forensic.db"
 
 # CORS — explicit local dev origins.
 # `"*"` cannot be combined with credentialed browser requests reliably.
@@ -30,4 +31,5 @@ MAX_PIPELINE_WORKERS = 4
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 RECO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+SQLITE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 

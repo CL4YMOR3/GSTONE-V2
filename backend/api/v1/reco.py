@@ -71,7 +71,7 @@ async def upload_books_workbook(
                 handoff_workbook_name=file.filename,
                 handoff_source="uploaded_workbook",
             )
-            store.runs[run_id] = run
+            store.save_run(run)
         else:
             run.status = "approved"
             run.entity_id = run.entity_id or entity_id
@@ -80,6 +80,7 @@ async def upload_books_workbook(
             run.handoff_workbook_path = str(dest_path)
             run.handoff_workbook_name = file.filename
             run.handoff_source = "uploaded_workbook"
+            store.save_run(run)
 
         return ApiResponse.ok(RecoBooksWorkbookResponse(
             run_id=run_id,
@@ -117,7 +118,7 @@ async def upload_2b(
             await out.write(await file.read())
 
     # Register reco session
-    store.recos[reco_id] = store.RecoSession(
+    reco_session = store.RecoSession(
         reco_id=reco_id,
         parent_run_id=parent_run_id,
         status="ingesting",
@@ -125,13 +126,25 @@ async def upload_2b(
         declared_period=declared_period,
         upload_ids=upload_ids,
     )
+    upload_records = [
+        {
+            "upload_id": upload_ids[idx],
+            "original_filename": file.filename,
+            "file_path": dest_paths[idx],
+            "metadata": {},
+        }
+        for idx, file in enumerate(files)
+    ]
+    store.save_reco(reco_session, upload_records=upload_records)
 
     # Run ingestion in background
     try:
         await reco_service.ingest_2b_files(reco_id, dest_paths, declared_gstin, declared_period)
     except Exception as exc:
-        store.recos[reco_id].status = "failed"
-        store.recos[reco_id].error = str(exc)
+        reco_session = store.get_reco(reco_id)
+        reco_session.status = "failed"
+        reco_session.error = str(exc)
+        store.save_reco(reco_session, upload_records=upload_records)
         detail = str(exc)
         status_code = 500
         lowered = detail.lower()
@@ -152,7 +165,7 @@ async def upload_2b(
     return ApiResponse.ok(RecoUploadResponse(
         reco_id=reco_id,
         upload_ids=upload_ids,
-        status=store.recos[reco_id].status,
+        status=store.get_reco(reco_id).status,
     ).model_dump())
 
 
@@ -269,6 +282,84 @@ async def get_reco_results(
     ).model_dump())
 
 
+@router.get("/{reco_id}/canonical-rows", summary="Get paginated canonical 2B invoice rows")
+async def get_canonical_rows(
+    reco_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    reco = store.get_reco(reco_id)
+    if not reco:
+        raise HTTPException(status_code=404, detail=f"reco_id '{reco_id}' not found")
+
+    rows = reco.canonical_invoices or []
+    total = len(rows)
+    start = (page - 1) * limit
+    paged = rows[start:start + limit]
+
+    return ApiResponse.ok({
+        "reco_id": reco_id,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "rows": paged,
+    })
+
+
+@router.get("/{reco_id}/exceptions", summary="Get persisted reconciliation exceptions with IMS-ready filters")
+async def get_reco_exceptions(
+    reco_id: str,
+    status: Optional[str] = Query(None),
+    action_state: Optional[str] = Query(None),
+    age_bucket: Optional[str] = Query(None, description="0_30 | 31_90 | 90_plus"),
+):
+    reco = store.get_reco(reco_id)
+    if not reco:
+        raise HTTPException(status_code=404, detail=f"reco_id '{reco_id}' not found")
+    try:
+        return ApiResponse.ok(
+            store.get_reco_exceptions(
+                reco_id,
+                status=status,
+                action_state=action_state,
+                age_bucket=age_bucket,
+            )
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/{reco_id}/reprocess", summary="Re-run reconciliation using stored books and 2B data")
+async def reprocess_reconciliation(reco_id: str):
+    reco = store.get_reco(reco_id)
+    if not reco:
+        raise HTTPException(status_code=404, detail=f"reco_id '{reco_id}' not found")
+
+    new_reco = store.RecoSession(
+        reco_id=f"RECO_{uuid.uuid4().hex[:8].upper()}",
+        parent_run_id=reco.parent_run_id,
+        status="ready",
+        declared_gstin=reco.declared_gstin,
+        declared_period=reco.declared_period,
+        upload_ids=list(reco.upload_ids),
+        canonical_invoices=list(reco.canonical_invoices),
+        canonical_stats=reco.canonical_stats,
+        upload_metadata_list=list(getattr(reco, "upload_metadata_list", []) or []),
+    )
+    upload_records = [
+        {
+            "upload_id": item.get("upload_id"),
+            "original_filename": item.get("original_filename"),
+            "file_path": item.get("file_path"),
+            "metadata": item.get("metadata", {}),
+        }
+        for item in (getattr(reco, "upload_metadata_list", []) or [])
+    ]
+    store.save_reco(new_reco, upload_records=upload_records)
+    await reco_service.run_reconciliation(new_reco.reco_id, reco.parent_run_id)
+    return ApiResponse.ok({"reco_id": new_reco.reco_id, "status": "running", "source_reco_id": reco_id})
+
+
 @router.get("/{reco_id}/export", summary="Export reconciliation results to Excel workbook")
 async def export_reco_results(reco_id: str):
     reco = store.get_reco(reco_id)
@@ -280,6 +371,14 @@ async def export_reco_results(reco_id: str):
     try:
         from fastapi.responses import FileResponse
         temp_file_path = await reco_service.export_reco_results_workbook(reco_id)
+        export_id = f"RECOEXP_{uuid.uuid4().hex[:8].upper()}"
+        store.save_export(store.ExportRecord(
+            export_id=export_id,
+            run_id=reco.parent_run_id,
+            reco_id=reco_id,
+            file_path=temp_file_path,
+            file_name=Path(temp_file_path).name,
+        ))
         
         filename = f"Reco_Results_{reco_id}.xlsx"
         return FileResponse(

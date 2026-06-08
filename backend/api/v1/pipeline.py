@@ -256,6 +256,21 @@ async def submit_fixes(run_id: str, request: SubmitFixesRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/{run_id}/reprocess", summary="Reprocess a stored books run using saved source files, mappings, and fixes")
+async def reprocess_run(run_id: str):
+    run = store.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"run_id '{run_id}' not found")
+
+    try:
+        return StreamingResponse(
+            pipeline_service.reprocess_run_stream(run_id, []),
+            media_type="text/event-stream",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.post("/finalize", summary="Certify the active sandbox run in session memory")
 async def finalize_audit(request: FinalizeAuditRequest):
     if not request.entity_id or not request.period:
@@ -278,10 +293,11 @@ async def finalize_audit(request: FinalizeAuditRequest):
         results=results_payload or {},
         fixes=fixes_payload or [],
     )
-    store.certified_runs[certification_id] = record
+    store.save_certified(record)
 
     if run:
         run.status = "complete"
+        store.save_run(run)
 
     return ApiResponse.ok({
         "certification_id": record.certification_id,

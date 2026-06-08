@@ -64,7 +64,7 @@ const getDownloadFileName = (response, fallback) => {
   if (utfMatch?.[1]) {
     return decodeURIComponent(utfMatch[1]);
   }
-  const asciiMatch = disposition.match(/filename=\"?([^"]+)\"?/i);
+  const asciiMatch = disposition.match(/filename="?([^"]+)"?/i);
   if (asciiMatch?.[1]) {
     return asciiMatch[1];
   }
@@ -87,6 +87,26 @@ export const api = {
   getDashboardStats: async (entityId, period) => {
     const response = await fetch(`${API_BASE_URL}/queries/dashboard/stats?${searchParams({ entity_id: entityId, period })}`);
     return unwrapResponse(response, 'Failed to fetch dashboard stats');
+  },
+
+  getMonthCycles: async (entityId) => {
+    const response = await fetch(`${API_BASE_URL}/queries/month-cycles?${searchParams({ entity_id: entityId })}`);
+    return unwrapResponse(response, 'Failed to fetch month cycles');
+  },
+
+  getMonthCycle: async (entityId, period) => {
+    const response = await fetch(`${API_BASE_URL}/queries/month-cycles/${entityId}/${period}`);
+    return unwrapResponse(response, 'Failed to fetch month cycle');
+  },
+
+  getMonthCycleHistory: async (entityId, period) => {
+    const response = await fetch(`${API_BASE_URL}/queries/month-cycles/${entityId}/${period}/history`);
+    return unwrapResponse(response, 'Failed to fetch month cycle history');
+  },
+
+  getSupplierFollowups: async (entityId, period) => {
+    const response = await fetch(`${API_BASE_URL}/queries/suppliers/followups?${searchParams({ entity_id: entityId, period })}`);
+    return unwrapResponse(response, 'Failed to fetch supplier followups');
   },
 
   validateBooksFiles: async (files) => {
@@ -327,6 +347,11 @@ export const api = {
     return unwrapResponse(response, 'Failed to fetch canonical 2B summary');
   },
 
+  getRecoCanonicalRows: async (recoId, page = 1, limit = 1000) => {
+    const response = await fetch(`${API_BASE_URL}/reco/${recoId}/canonical-rows?${searchParams({ page, limit })}`);
+    return unwrapResponse(response, 'Failed to fetch canonical 2B rows');
+  },
+
   runReconciliation: async (recoId, parentRunId) => {
     const response = await fetch(`${API_BASE_URL}/reco/run`, {
       method: 'POST',
@@ -346,6 +371,15 @@ export const api = {
       limit: options.limit || 1000,
     })}`);
     return unwrapResponse(response, 'Failed to fetch reconciliation results');
+  },
+
+  getRecoExceptions: async (recoId, options = {}) => {
+    const response = await fetch(`${API_BASE_URL}/reco/${recoId}/exceptions?${searchParams({
+      status: options.status,
+      action_state: options.actionState,
+      age_bucket: options.ageBucket,
+    })}`);
+    return unwrapResponse(response, 'Failed to fetch reconciliation exceptions');
   },
 
   downloadRecoResultsExport: async (recoId, fallbackFileName = 'gstr_2b_reconciliation.xlsx') => {
@@ -370,6 +404,45 @@ export const api = {
   searchVendors: async (query, context, limit = 20) => {
     const response = await fetch(`${API_BASE_URL}/vendors/search?${searchParams({ q: query, context, limit })}`);
     return unwrapResponse(response, 'Failed to search vendors');
+  },
+
+  getVendors: async (options = {}) => {
+    const response = await fetch(`${API_BASE_URL}/vendors?${searchParams({
+      context: options.context,
+      q: options.query,
+      status: options.status,
+      trust_level: options.trustLevel,
+      sort_by: options.sortBy,
+      limit: options.limit || 5000,
+    })}`);
+    return unwrapResponse(response, 'Failed to load vendors');
+  },
+
+  getVendorStats: async (context) => {
+    const response = await fetch(`${API_BASE_URL}/vendors/stats?${searchParams({ context })}`);
+    return unwrapResponse(response, 'Failed to load vendor stats');
+  },
+
+  createVendor: async (payload) => {
+    const response = await fetch(`${API_BASE_URL}/vendors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return unwrapResponse(response, 'Failed to save vendor');
+  },
+
+  importVendors: async (file, context) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (context) {
+      formData.append('context', context);
+    }
+    const response = await fetch(`${API_BASE_URL}/vendors/import`, {
+      method: 'POST',
+      body: formData,
+    });
+    return unwrapResponse(response, 'Failed to import vendors');
   },
 
   validateGSTIN: async (gstin) => {
@@ -461,7 +534,8 @@ export const consumeSSEStream = async (response, onMessage, onError, onComplete)
           if (onMessage) {
             onMessage(data);
           }
-        } catch {
+        } catch (error) {
+          console.error('Buffered SSE JSON Parse Error:', error);
         }
       }
     }

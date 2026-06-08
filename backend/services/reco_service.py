@@ -296,6 +296,7 @@ def _run_reconciliation_sync(
             "canonical_total_gst": float(canonical_invoice.total_gst_amount) if canonical_invoice else None,
             "canonical_invoice_value": float(canonical_invoice.invoice_value) if canonical_invoice else None,
             "candidate_count": getattr(mr, "candidate_count", 0),
+            "garden_name": getattr(books_invoice, "context", getattr(canonical_invoice, "filing_period", None)),
             "value_deltas": [
                 {"field": d.field_name, "books_value": float(d.books_value), "reco_value": float(d.canonical_2b_value), "delta": float(d.delta), "within_tolerance": d.within_tolerance}
                 for d in (mr.value_deltas or [])
@@ -491,6 +492,19 @@ async def ingest_2b_files(
         reco.upload_metadata_list.extend(result["upload_metadata_list"])
         
         reco.status = "ready"
+        upload_records = []
+        for idx, upload_id in enumerate(reco.upload_ids):
+            metadata = result["upload_metadata_list"][idx] if idx < len(result["upload_metadata_list"]) else {}
+            upload_records.append(
+                {
+                    "upload_id": upload_id,
+                    "original_filename": metadata.get("original_filename"),
+                    "file_path": metadata.get("stored_raw_dir") or metadata.get("original_file_path"),
+                    "metadata": metadata,
+                }
+            )
+        reco.upload_metadata_list = result["upload_metadata_list"]
+        store.save_reco(reco, upload_records=upload_records)
 
     return result
 
@@ -508,6 +522,7 @@ async def run_reconciliation(reco_id: str, parent_run_id: str) -> None:
         raise ValueError(f"Parent run '{parent_run_id}' has no books result")
 
     reco.status = "running"
+    store.save_reco(reco)
     books_invoices = _load_books_invoices_for_run(parent_run_id, run)
     canonical_invoices = reco.canonical_invoices
 
@@ -526,12 +541,14 @@ def _reco_and_store(reco_id, books_invoices, canonical_invoices, parent_run_id):
         if reco:
             reco.match_results = result
             reco.status = "complete"
+            store.save_reco(reco)
     except Exception as exc:
         import traceback
         reco = store.get_reco(reco_id)
         if reco:
             reco.status = "failed"
             reco.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+            store.save_reco(reco)
 
 
 async def export_reco_results_workbook(reco_id: str) -> str:

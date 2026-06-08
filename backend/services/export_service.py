@@ -192,5 +192,5 @@ async def generate_export(run_id: str) -> store.ExportRecord:
         file_name=file_name,
         certification_id=certification.certification_id if certification else None,
     )
-    store.exports[export_id] = record
+    store.save_export(record)
     return record, file_size

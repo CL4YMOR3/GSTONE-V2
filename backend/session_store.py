@@ -1,22 +1,21 @@
 """
-In-Memory Session Store
+Persistent session facade.
 
-Holds run state, certified snapshots, upload sessions, reco sessions, and exports
-in simple dicts. This mirrors the legacy GSTONE offline model where the active
-process owns the truth and the exported workbook is the cross-phase artifact.
+Keeps the existing dataclass-based API for the app while persisting all session
+state into SQLite-backed month-cycle tables.
 """
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Any
 from datetime import datetime
+from typing import Optional, Dict, List, Any
 
+import database
 
-# ─── Data Classes ────────────────────────────────────────────────────────────
 
 @dataclass
 class UploadSession:
     file_id: str
     original_filename: str
-    file_path: str          # Absolute path to temp file on disk
+    file_path: str
     sheet_names: List[str]
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -24,7 +23,7 @@ class UploadSession:
 @dataclass
 class RunSession:
     run_id: str
-    status: str             # "pending" | "running" | "complete" | "failed"
+    status: str
     entity_id: Optional[str]
     period: Optional[str]
     business_context: str
@@ -33,13 +32,11 @@ class RunSession:
     garden_files: List[Dict[str, Any]]
     col_map: Dict[str, str]
     file_ids: List[str]
-    # Accumulated approved fixes across reprocess loops (FixAction dicts)
     fix_actions: List[Dict[str, Any]] = field(default_factory=list)
-    # Serialized pipeline output (DataFrames stored as list-of-dicts records)
     result: Optional[Dict[str, Any]] = None
     handoff_workbook_path: Optional[str] = None
     handoff_workbook_name: Optional[str] = None
-    handoff_source: Optional[str] = None  # "uploaded_workbook" | "approved_export"
+    handoff_source: Optional[str] = None
     error: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -48,16 +45,16 @@ class RunSession:
 class RecoSession:
     reco_id: str
     parent_run_id: str
-    status: str             # "pending" | "ingesting" | "ready" | "running" | "complete" | "failed"
+    status: str
     declared_gstin: str
     declared_period: str
     upload_ids: List[str] = field(default_factory=list)
-    # Canonical invoices stored as list-of-dicts for JSON-safe serialization
     canonical_invoices: List[Dict[str, Any]] = field(default_factory=list)
     canonical_stats: Optional[Dict[str, Any]] = None
     match_results: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    upload_metadata_list: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -77,15 +74,14 @@ class CertifiedRun:
 @dataclass
 class ExportRecord:
     export_id: str
-    run_id: str
+    run_id: Optional[str]
     file_path: str
     file_name: str
     approved: bool = False
     certification_id: Optional[str] = None
+    reco_id: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
-
-# ─── Global Store (dict-based, swappable) ────────────────────────────────────
 
 uploads: Dict[str, UploadSession] = {}
 runs: Dict[str, RunSession] = {}
@@ -94,129 +90,170 @@ certified_runs: Dict[str, CertifiedRun] = {}
 exports: Dict[str, ExportRecord] = {}
 
 
-# ─── Helper Functions ─────────────────────────────────────────────────────────
+def init_store() -> None:
+    database.init_db()
+
+
+def save_upload(upload: UploadSession) -> None:
+    uploads[upload.file_id] = upload
+    database.save_upload(upload)
+
 
 def get_upload(file_id: str) -> Optional[UploadSession]:
-    return uploads.get(file_id)
+    cached = uploads.get(file_id)
+    if cached:
+        return cached
+    payload = database.get_upload(file_id)
+    if not payload:
+        return None
+    upload = UploadSession(**payload)
+    uploads[file_id] = upload
+    return upload
+
+
+def delete_upload(file_id: str) -> None:
+    uploads.pop(file_id, None)
+    database.delete_upload(file_id)
+
+
+def save_run(run: RunSession) -> None:
+    runs[run.run_id] = run
+    database.save_run(run)
 
 
 def get_run(run_id: str) -> Optional[RunSession]:
-    return runs.get(run_id)
+    cached = runs.get(run_id)
+    if cached:
+        return cached
+    payload = database.get_run(run_id)
+    if not payload:
+        return None
+    run = RunSession(**payload)
+    runs[run_id] = run
+    return run
 
 
 def get_latest_run(entity_id: str, period: str) -> Optional[RunSession]:
-    candidates = [
-        run for run in runs.values()
-        if run.entity_id == entity_id and run.period == period
-    ]
-    if not candidates:
+    payload = database.get_latest_run(entity_id, period)
+    if not payload:
         return None
+    run = runs.get(payload["run_id"])
+    if run:
+        return run
+    run = RunSession(**payload)
+    runs[run.run_id] = run
+    return run
 
-    return max(candidates, key=lambda run: (run.created_at, run.run_id))
+
+def save_reco(reco: RecoSession, upload_records: Optional[List[Dict[str, Any]]] = None) -> None:
+    recos[reco.reco_id] = reco
+    database.save_reco(reco, upload_records=upload_records)
 
 
 def get_reco(reco_id: str) -> Optional[RecoSession]:
-    return recos.get(reco_id)
+    cached = recos.get(reco_id)
+    if cached:
+        return cached
+    payload = database.get_reco(reco_id)
+    if not payload:
+        return None
+    reco = RecoSession(**payload)
+    recos[reco_id] = reco
+    return reco
+
+
+def save_certified(record: CertifiedRun) -> None:
+    certified_runs[record.certification_id] = record
+    database.save_certified_run(record)
 
 
 def get_certified(certification_id: str) -> Optional[CertifiedRun]:
-    return certified_runs.get(certification_id)
+    cached = certified_runs.get(certification_id)
+    if cached:
+        return cached
+    for record in certified_runs.values():
+        if record.certification_id == certification_id:
+            return record
+    return None
 
 
 def get_certified_by_run_id(run_id: str) -> Optional[CertifiedRun]:
-    candidates = [record for record in certified_runs.values() if record.run_id == run_id]
-    if not candidates:
+    for record in certified_runs.values():
+        if record.run_id == run_id:
+            return record
+    payload = database.get_certified_by_run_id(run_id)
+    if not payload:
         return None
-    return max(candidates, key=lambda record: (record.certified_at, record.certification_id))
+    record = CertifiedRun(**payload)
+    certified_runs[record.certification_id] = record
+    return record
+
+
+def save_export(record: ExportRecord) -> None:
+    exports[record.export_id] = record
+    database.save_export_record(record)
 
 
 def get_export(export_id: str) -> Optional[ExportRecord]:
-    return exports.get(export_id)
+    cached = exports.get(export_id)
+    if cached:
+        return cached
+    payload = database.get_export(export_id)
+    if not payload:
+        return None
+    record = ExportRecord(**payload)
+    exports[export_id] = record
+    return record
+
+
+def mark_export_approved(export_id: str) -> None:
+    record = get_export(export_id)
+    if record:
+        record.approved = True
+        exports[export_id] = record
+    database.mark_export_approved(export_id)
 
 
 def get_latest_export_for_run(run_id: str, approved_only: bool = False) -> Optional[ExportRecord]:
-    candidates = [
-        record for record in exports.values()
-        if record.run_id == run_id and (record.approved or not approved_only)
-    ]
-    if not candidates:
+    payload = database.get_latest_export_for_run(run_id, approved_only=approved_only)
+    if not payload:
         return None
-    return max(candidates, key=lambda record: (record.created_at, record.export_id))
+    record = exports.get(payload["export_id"])
+    if record:
+        return record
+    record = ExportRecord(**payload)
+    exports[record.export_id] = record
+    return record
 
 
 def get_dashboard_stats(entity_id: str, period: str) -> Dict[str, Any]:
-    certified = [
-        record for record in certified_runs.values()
-        if record.entity_id == entity_id
-    ]
-    period_certified = [record for record in certified if record.period == period]
-    period_recos = [
-        reco for reco in recos.values()
-        if reco.status == "complete" and _matches_entity_period(reco.parent_run_id, entity_id, period)
-    ]
-
-    distribution = {
-        "MATCHED_STRICT": 0,
-        "MATCHED_RELAXED": 0,
-        "VALUE_MISMATCH": 0,
-        "MISSING_IN_2B": 0,
-        "MISSING_IN_BOOKS": 0,
-        "AMBIGUOUS_MATCH": 0,
-        "POSSIBLE_MATCH": 0,
-    }
-    total_matches = 0
-    matched_count = 0
-
-    for reco in period_recos:
-        payload = reco.match_results or {}
-        rows = payload.get("results", payload.get("match_results", []))
-        for row in rows:
-            status = row.get("match_status")
-            if status:
-                distribution[status] = distribution.get(status, 0) + 1
-            total_matches += 1
-            if status in ("MATCHED_STRICT", "MATCHED_RELAXED"):
-                matched_count += 1
-
-    latest_certified = None
-    if period_certified:
-        latest_certified = max(period_certified, key=lambda record: (record.certified_at, record.certification_id))
-
-    summary = latest_certified.summary if latest_certified else {}
-    results = latest_certified.results if latest_certified else {}
-    total_invoices = (
-        summary.get("valid_invoices")
-        or len(results.get("clean_invoices", []))
-        or len(results.get("clean", []))
-        or 0
-    )
-
-    return {
-        "kpis": {
-            "total_runs": len(certified),
-            "match_rate": round((matched_count / total_matches) * 100) if total_matches else 0,
-            "at_risk_itc": 0,
-            "total_invoices": total_invoices,
-        },
-        "distribution": distribution,
-        "trends": [],
-        "latest_certified": {
-            "run_id": latest_certified.run_id,
-            "period": latest_certified.period,
-            "certified_at": latest_certified.certified_at,
-            "fix_count": len(latest_certified.fixes),
-            "warning_count": len(results.get("warnings", [])),
-        } if latest_certified else None,
-    }
+    return database.get_dashboard_stats(entity_id, period)
 
 
-def _matches_entity_period(run_id: str, entity_id: str, period: str) -> bool:
-    run = runs.get(run_id)
-    if run:
-        return run.entity_id == entity_id and run.period == period
+def list_month_cycles(entity_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    return database.list_month_cycles(entity_id)
 
-    certified = get_certified_by_run_id(run_id)
-    if certified:
-        return certified.entity_id == entity_id and certified.period == period
 
-    return False
+def get_month_cycle(entity_id: str, period: str) -> Optional[Dict[str, Any]]:
+    return database.get_month_cycle(entity_id, period)
+
+
+def get_month_cycle_history(entity_id: str, period: str) -> Dict[str, Any]:
+    return database.get_month_cycle_history(entity_id, period)
+
+
+def get_reco_exceptions(
+    reco_id: str,
+    status: Optional[str] = None,
+    action_state: Optional[str] = None,
+    age_bucket: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    return database.get_reco_exceptions(reco_id, status=status, action_state=action_state, age_bucket=age_bucket)
+
+
+def get_supplier_followups(entity_id: str, period: Optional[str] = None) -> List[Dict[str, Any]]:
+    return database.get_supplier_followups(entity_id, period)
+
+
+def close_month_cycle(entity_id: str, period: str) -> Dict[str, Any]:
+    return database.close_month_cycle(entity_id, period)

@@ -58,12 +58,12 @@ async def upload_files(files: List[UploadFile] = File(...)):
             g_name = Path(file.filename).stem
 
         # Register in session store
-        store.uploads[file_id] = store.UploadSession(
+        store.save_upload(store.UploadSession(
             file_id=file_id,
             original_filename=file.filename,
             file_path=str(dest_path),
             sheet_names=sheets,
-        )
+        ))
 
         # Quick row count for the first sheet (default)
         row_count = 0
@@ -142,6 +142,6 @@ async def delete_upload(file_id: str):
     except Exception:
         pass
 
-    del store.uploads[file_id]
+    store.delete_upload(file_id)
     return ApiResponse.ok({"deleted": file_id})
 

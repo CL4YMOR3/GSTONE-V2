@@ -24,6 +24,7 @@ import { EntityManagement } from './features/settings/EntityManagement';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { VendorDirectory } from './features/vendors/VendorDirectory';
 import { AuditHistoryPlaceholder } from './features/settings/SecondaryPlaceholders';
+import { LedgerReports } from './features/ledger/LedgerReports';
 
 function App() {
   const setEntities = useAppStore((state) => state.setEntities);
@@ -73,6 +74,7 @@ function App() {
           <Route path="/settings/entities" element={<EntityManagement />} />
 
           {/* Secondary Views */}
+          <Route path="/ledger" element={<LedgerReports />} />
           <Route path="/history" element={<AuditHistoryPlaceholder />} />
           <Route path="/directory" element={<VendorDirectory />} />
           {/* Fallback */}

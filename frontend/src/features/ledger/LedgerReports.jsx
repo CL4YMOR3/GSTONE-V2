@@ -24,6 +24,8 @@ const TAB_DEFS = [
   { id: 'books_pending', label: 'Books Pending', icon: TrendingDown, colorClasses: 'border-amber-200 bg-amber-50 text-amber-900', activeIcon: 'text-amber-600' },
   { id: 'books_clean', label: 'Books Clean', icon: CheckCircle2, colorClasses: 'border-emerald-200 bg-emerald-50 text-brand-forest', activeIcon: 'text-brand-forest' },
   { id: 'matched', label: 'Matched', icon: Target, colorClasses: 'border-emerald-200 bg-emerald-50 text-brand-forest', activeIcon: 'text-brand-forest' },
+  { id: 'value_mismatch', label: 'Value Difference', icon: TrendingDown, colorClasses: 'border-amber-200 bg-amber-50 text-amber-900', activeIcon: 'text-amber-600' },
+  { id: 'possible_match', label: 'Possible Match', icon: LayoutGrid, colorClasses: 'border-violet-200 bg-violet-50 text-violet-900', activeIcon: 'text-violet-600' },
   { id: 'missing_in_books', label: 'Missing In Books', icon: LayoutGrid, colorClasses: 'border-sky-200 bg-sky-50 text-sky-900', activeIcon: 'text-sky-600' },
   { id: 'reco_pending', label: 'Missing In 2B', icon: AlertCircle, colorClasses: 'border-rose-200 bg-rose-50 text-rose-900', activeIcon: 'text-rose-600' },
 ];
@@ -62,6 +64,18 @@ const STATUS_BADGES = {
   matched: 'border-emerald-200 bg-emerald-50 text-brand-forest',
   pending: 'border-sky-200 bg-sky-50 text-sky-700',
   canonical: 'border-stone-200 bg-stone-100 text-stone-700',
+};
+
+const getConsumerTier = (status, type) => {
+  if (status === 'MATCHED_STRICT') return 'Perfect Match';
+  if (status === 'MATCHED_RELAXED') return 'Relaxed Match';
+  if (status === 'POSSIBLE_MATCH' || status === 'PROBABLE_MATCH') return 'Partial Match';
+  if (status === 'VALUE_MISMATCH') return 'Value Difference';
+  if (status === 'MISSING_IN_2B') return 'Missing in 2B';
+  if (status === 'MISSING_IN_BOOKS') return 'Missing in Books';
+  if (status === 'AMBIGUOUS_MATCH') return 'Duplicate / Ambiguous';
+  if (type === 'error' || type === 'warning') return type === 'error' ? 'Error' : 'Warning';
+  return '2B Record';
 };
 
 const formatCurrency = (value) => {
@@ -253,6 +267,8 @@ export const LedgerReports = () => {
 
   const datasetMap = React.useMemo(() => {
     const matchedRows = snapshot.recoResults.filter((row) => ['MATCHED_STRICT', 'MATCHED_RELAXED'].includes(row.match_status));
+    const valueMismatchRows = snapshot.recoResults.filter((row) => row.match_status === 'VALUE_MISMATCH');
+    const possibleMatchRows = snapshot.recoResults.filter((row) => ['POSSIBLE_MATCH', 'PROBABLE_MATCH', 'AMBIGUOUS_MATCH'].includes(row.match_status));
     const missingInBooksRows = snapshot.recoResults.filter((row) => row.match_status === 'MISSING_IN_BOOKS');
     const missingIn2BRows = snapshot.recoResults.filter((row) => row.match_status === 'MISSING_IN_2B');
     const pendingBooksRows = [
@@ -264,6 +280,8 @@ export const LedgerReports = () => {
       books_pending: pendingBooksRows,
       books_clean: snapshot.cleanRows,
       matched: matchedRows,
+      value_mismatch: valueMismatchRows,
+      possible_match: possibleMatchRows,
       missing_in_books: missingInBooksRows,
       reco_pending: missingIn2BRows,
     };
@@ -412,6 +430,7 @@ export const LedgerReports = () => {
         invoice_date: row.invoice_date || row.books_invoice_date || row.canonical_invoice_date || '',
         vendor_name: row.vendor_name || row.books_supplier_name || row.canonical_supplier_name || '',
         gstin: row.gstin || row.books_supplier_gstin || row.canonical_supplier_gstin || '',
+        garden: row.garden_name || row.garden || row._garden_name || '',
         taxable_value: row.taxable_value || row.books_taxable_value || row.canonical_taxable_value || '',
         total_gst: row.books_total_gst || row.canonical_total_gst || '',
         total_invoice_value: row.total_invoice_value || row.books_invoice_value || row.canonical_invoice_value || '',
@@ -567,7 +586,7 @@ export const LedgerReports = () => {
 
       <section className="space-y-6">
         <div className="rounded-[26px] border border-stone-100 bg-white p-2 shadow-sm">
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+          <div className="flex overflow-x-auto gap-2 no-scrollbar pb-1">
             {TAB_DEFS.map((tab) => {
               const count = datasetMap[tab.id]?.length || 0;
               const active = activeTab === tab.id;
@@ -575,19 +594,16 @@ export const LedgerReports = () => {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`rounded-[18px] border px-3 py-2.5 text-left transition-all ${
+                  className={`flex-1 min-w-[120px] whitespace-nowrap rounded-[18px] border px-4 py-2.5 text-left transition-all ${
                     active
                       ? `${tab.colorClasses} shadow-sm`
                       : 'border-transparent bg-transparent text-stone-500 hover:bg-stone-50 hover:text-stone-900'
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <tab.icon className={`h-4 w-4 ${active ? tab.activeIcon : 'text-stone-400'}`} />
-                    <span className="text-[10px] font-black uppercase tracking-widest opacity-80">{tab.label}</span>
+                  <div className={`text-[9px] font-black uppercase tracking-widest ${active ? '' : 'text-stone-400'}`}>
+                    {tab.label}
                   </div>
-                  <div className="mt-1 flex items-baseline gap-2">
-                    <span className="text-xl font-bold tracking-tight">{count}</span>
-                  </div>
+                  <div className="mt-1.5 text-lg font-black leading-none">{count}</div>
                 </button>
               );
             })}
@@ -623,19 +639,26 @@ export const LedgerReports = () => {
             <table className="min-w-full text-left">
               <thead className="border-b border-stone-100 bg-stone-50/80">
                 <tr className="text-[10px] font-black uppercase tracking-widest text-stone-400">
-                  <th className="px-6 py-4">#</th>
-                  <th className="px-6 py-4">GSTIN</th>
-                  <th className="px-6 py-4">Vendor</th>
-                  <th className="px-6 py-4">Books Invoice</th>
-                  <th className="px-6 py-4">Books Date</th>
-                  <th className="px-6 py-4">Books Taxable</th>
-                  <th className="px-6 py-4">Books GST</th>
-                  <th className="px-6 py-4">2B Invoice</th>
-                  <th className="px-6 py-4">2B Date</th>
-                  <th className="px-6 py-4">2B Taxable</th>
-                  <th className="px-6 py-4">2B GST</th>
-                  <th className="px-6 py-4">Delta</th>
-                  <th className="px-6 py-4 text-right">Status</th>
+                  <th className="px-6 py-4 bg-slate-100 text-slate-700">#</th>
+                  <th className="px-6 py-4 bg-slate-100 text-slate-700">GSTIN</th>
+                  <th className="px-6 py-4 bg-slate-100 text-slate-700">Vendor</th>
+                  <th className="px-6 py-4 bg-slate-100 text-slate-700">Garden</th>
+                  <th className="px-6 py-4 bg-sky-50/50 text-sky-900">{activeTab === 'books_pending' || activeTab === 'books_clean' ? 'Invoice' : 'Books Invoice'}</th>
+                  <th className="px-6 py-4 bg-sky-50/50 text-sky-900">{activeTab === 'books_pending' || activeTab === 'books_clean' ? 'Date' : 'Books Date'}</th>
+                  <th className="px-6 py-4 bg-sky-50/50 text-sky-900">{activeTab === 'books_pending' || activeTab === 'books_clean' ? 'Taxable' : 'Books Taxable'}</th>
+                  <th className="px-6 py-4 bg-sky-50/50 text-sky-900">{activeTab === 'books_pending' || activeTab === 'books_clean' ? 'GST' : 'Books GST'}</th>
+                  {!(activeTab === 'books_pending' || activeTab === 'books_clean') && (
+                    <>
+                      <th className="px-6 py-4 bg-emerald-50/50 text-brand-forest">2B Invoice</th>
+                      <th className="px-6 py-4 bg-emerald-50/50 text-brand-forest">2B Date</th>
+                      <th className="px-6 py-4 bg-emerald-50/50 text-brand-forest">2B Taxable</th>
+                      <th className="px-6 py-4 bg-emerald-50/50 text-brand-forest">2B GST</th>
+                      <th className="px-6 py-4 bg-amber-50/50 text-amber-900">Delta</th>
+                    </>
+                  )}
+                  {!['value_mismatch', 'possible_match', 'reco_pending', 'missing_in_books'].includes(activeTab) && (
+                    <th className="px-6 py-4 bg-indigo-50/50 text-indigo-900">Status</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 bg-white">
@@ -672,33 +695,45 @@ export const LedgerReports = () => {
                         onClick={() => openDetails(row, index)}
                         className={`cursor-pointer transition-all even:bg-stone-50/50 hover:bg-stone-100/50 ${selectedRowKey === `${activeTab}-${invoiceLabel}-${index}` ? 'bg-brand-emerald/5' : ''}`}
                       >
-                        <td className="px-6 py-4 align-top text-xs font-black text-stone-400">
-                          {String(index + 1).padStart(3, '0')}
-                        </td>
-                        <td className="px-6 py-4 align-top text-sm font-bold text-stone-900">
-                          {gstinLabel}
-                        </td>
-                        <td className="px-6 py-4 align-top">
-                          <div className="min-w-[220px] text-sm font-semibold text-stone-900">
+                        <td className="px-6 py-4 align-top text-sm font-medium text-slate-600 bg-slate-50">{String(index + 1).padStart(3, '0')}</td>
+                        <td className="px-6 py-4 align-top text-sm font-mono text-slate-700 bg-slate-50/50">{gstinLabel}</td>
+                        <td className="px-6 py-4 align-top text-sm text-slate-900 font-medium bg-slate-50/50">
+                          <div className="line-clamp-2" title={vendorLabel}>
                             {vendorLabel}
                           </div>
                         </td>
-                        <td className="px-6 py-4 align-top text-sm font-mono font-semibold text-stone-700">{row.books_invoice_number || row.invoice_number || '—'}</td>
-                        <td className="px-6 py-4 align-top text-sm text-stone-600">{normalizeDate(row.books_invoice_date || row.invoice_date)}</td>
-                        <td className="px-6 py-4 align-top text-sm font-mono text-stone-700">{formatCurrency(booksTaxable)}</td>
-                        <td className="px-6 py-4 align-top text-sm font-mono text-stone-700">{formatCurrency(booksGst)}</td>
-                        <td className="px-6 py-4 align-top text-sm font-mono font-semibold text-stone-700">{row.canonical_invoice_number || row.matched_2b_invoice_id || '—'}</td>
-                        <td className="px-6 py-4 align-top text-sm text-stone-600">{normalizeDate(row.canonical_invoice_date)}</td>
-                        <td className="px-6 py-4 align-top text-sm font-mono text-stone-700">{formatCurrency(portalTaxable)}</td>
-                        <td className="px-6 py-4 align-top text-sm font-mono text-stone-700">{formatCurrency(portalGst)}</td>
-                        <td className={`px-6 py-4 align-top text-sm font-mono font-bold ${delta > 0 ? 'text-amber-700' : delta < 0 ? 'text-red-600' : 'text-stone-500'}`}>
-                          {formatCurrency(delta)}
+                        <td className="px-6 py-4 align-top text-sm text-slate-700 bg-slate-50/50">
+                          {row.garden_name || row.garden || row._garden_name || '—'}
                         </td>
-                        <td className="px-6 py-4 align-top text-right">
-                          <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest ${STATUS_BADGES[badgeType] || STATUS_BADGES.canonical}`}>
-                            {badgeType === 'warning' ? 'Warning' : badgeType === 'error' ? 'Error' : badgeType === 'matched' ? 'Matched' : badgeType === 'pending' ? 'Pending' : '2B'}
-                          </div>
-                        </td>
+                        <td className="px-6 py-4 align-top text-sm font-mono font-semibold text-sky-900 bg-sky-50/30">{row.books_invoice_number || row.invoice_number || '—'}</td>
+                        <td className="px-6 py-4 align-top text-sm text-sky-800 bg-sky-50/30">{normalizeDate(row.books_invoice_date || row.invoice_date)}</td>
+                        <td className="px-6 py-4 align-top text-sm font-mono text-sky-900 bg-sky-50/30">{formatCurrency(booksTaxable)}</td>
+                        <td className="px-6 py-4 align-top text-sm font-mono text-sky-900 bg-sky-50/30">{formatCurrency(booksGst)}</td>
+                        {!(activeTab === 'books_pending' || activeTab === 'books_clean') && (
+                          <>
+                            <td className="px-6 py-4 align-top text-sm font-mono font-semibold text-brand-forest bg-emerald-50/30">{row.canonical_invoice_number || row.matched_2b_invoice_id || '—'}</td>
+                            <td className="px-6 py-4 align-top text-sm text-emerald-800 bg-emerald-50/30">{normalizeDate(row.canonical_invoice_date)}</td>
+                            <td className="px-6 py-4 align-top text-sm font-mono text-brand-forest bg-emerald-50/30">{formatCurrency(portalTaxable)}</td>
+                            <td className="px-6 py-4 align-top text-sm font-mono text-brand-forest bg-emerald-50/30">{formatCurrency(portalGst)}</td>
+                            <td className={`px-6 py-4 align-top text-sm font-mono font-bold bg-amber-50/30 ${delta > 0 ? 'text-amber-700' : delta < 0 ? 'text-red-600' : 'text-stone-500'}`}>
+                              {formatCurrency(delta)}
+                            </td>
+                          </>
+                        )}
+                        {!['value_mismatch', 'possible_match', 'reco_pending', 'missing_in_books'].includes(activeTab) && (
+                          <td className="px-6 py-4 align-top bg-indigo-50/30">
+                            <div className="flex flex-col items-start gap-1">
+                              <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-semibold border ${STATUS_BADGES[badgeType] || STATUS_BADGES.canonical}`}>
+                                {getConsumerTier(row.match_status, row.type)}
+                              </span>
+                              {row.match_rule && (
+                                <span className="text-[10px] text-stone-400 font-medium">
+                                  {row.match_rule}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     );
                   })

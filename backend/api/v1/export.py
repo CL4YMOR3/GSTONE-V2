@@ -59,12 +59,14 @@ async def approve_export(export_id: str):
     if not record:
         raise HTTPException(status_code=404, detail=f"export_id '{export_id}' not found")
 
+    store.mark_export_approved(export_id)
     record.approved = True
 
     # Also mark run as approved
     run = store.get_run(record.run_id)
     if run:
         run.status = "approved"
+        store.save_run(run)
 
     return ApiResponse.ok(ApproveResponse(
         export_id=export_id,

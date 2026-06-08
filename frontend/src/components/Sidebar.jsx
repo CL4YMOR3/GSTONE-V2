@@ -1,5 +1,4 @@
 import React from 'react';
-// eslint-disable-next-line no-unused-vars
 import { useAppStore } from '../store/useAppStore';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -21,7 +20,8 @@ import {
   Users,
   Settings,
   Lock,
-  Settings2
+  Settings2,
+  BookOpenText
 } from 'lucide-react';
 
 export const Sidebar = () => {
@@ -215,9 +215,10 @@ export const Sidebar = () => {
           })}
 
           <div className="mt-auto space-y-1 border-t border-[rgba(191,211,195,0.58)] pt-4">
-            {[
+            {[ 
+              { icon: BookOpenText, label: 'Ledger & Reports', path: '/ledger' },
               { icon: History, label: 'Audit History', path: '/history' },
-              { icon: Users, label: 'Partner Directory', path: '/directory' },
+              { icon: Building2, label: 'Vendor Master', path: '/directory' },
               { icon: Settings, label: 'Settings', path: '/settings/entities' }
             ].map((item, idx) => (
               <button
