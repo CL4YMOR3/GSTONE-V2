@@ -539,33 +539,28 @@ export const LedgerReports = () => {
               </div>
             </label>
           </div>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-[70%]">
-              <label className="flex flex-1 items-center gap-2 rounded-[24px] border border-stone-200 bg-white px-4 py-3 shadow-sm">
-                <Search className="h-4 w-4 text-stone-400 shrink-0" />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search invoice, GSTIN, vendor..."
-                  className="w-full bg-transparent text-sm font-medium text-stone-700 outline-none placeholder:text-stone-400"
-                />
-              </label>
-              <label className="flex w-full items-center gap-2 rounded-[24px] border border-stone-200 bg-white px-4 py-3 shadow-sm sm:w-64">
-                <Filter className="h-4 w-4 text-stone-400 shrink-0" />
-                <select
-                  value={sortBy}
-                  onChange={(event) => setSortBy(event.target.value)}
-                  className="w-full bg-transparent text-sm font-medium text-stone-700 outline-none"
-                >
-                  {SORT_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="text-[11px] font-semibold text-stone-500 whitespace-nowrap">
-              {filteredRows.length} visible row{filteredRows.length === 1 ? '' : 's'} in the current ledger view
-            </div>
+          <div className="flex w-full flex-col gap-3 sm:flex-row">
+            <label className="flex flex-1 items-center gap-2 rounded-[24px] border border-stone-200 bg-white px-4 py-3 shadow-sm">
+              <Search className="h-4 w-4 text-stone-400 shrink-0" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search invoice, GSTIN, vendor..."
+                className="w-full bg-transparent text-sm font-medium text-stone-700 outline-none placeholder:text-stone-400"
+              />
+            </label>
+            <label className="flex w-full items-center gap-2 rounded-[24px] border border-stone-200 bg-white px-4 py-3 shadow-sm sm:w-64">
+              <Filter className="h-4 w-4 text-stone-400 shrink-0" />
+              <select
+                value={sortBy}
+                onChange={(event) => setSortBy(event.target.value)}
+                className="w-full bg-transparent text-sm font-medium text-stone-700 outline-none"
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
       </section>
