@@ -454,6 +454,36 @@ export const api = {
       error_message: isValid ? null : 'GSTIN must be a valid 15-character GST identifier.',
     };
   },
+
+  getLedgerReco: async (params = {}) => {
+    const response = await fetch(`${API_BASE_URL}/queries/ledger/reco?${searchParams(params)}`);
+    return unwrapResponse(response, 'Failed to fetch ledger reconciliation data');
+  },
+
+  getLedgerBooks: async (params = {}) => {
+    const response = await fetch(`${API_BASE_URL}/queries/ledger/books?${searchParams(params)}`);
+    return unwrapResponse(response, 'Failed to fetch ledger books data');
+  },
+
+  getLedgerRawBooks: async (params = {}) => {
+    const response = await fetch(`${API_BASE_URL}/queries/ledger/raw-books?${searchParams(params)}`);
+    return unwrapResponse(response, 'Failed to fetch raw books data');
+  },
+
+  getLedger2B: async (params = {}) => {
+    const response = await fetch(`${API_BASE_URL}/queries/ledger/2b?${searchParams(params)}`);
+    return unwrapResponse(response, 'Failed to fetch ledger 2B data');
+  },
+
+  getLedgerKpis: async (params = {}) => {
+    const response = await fetch(`${API_BASE_URL}/queries/ledger/kpis?${searchParams(params)}`);
+    return unwrapResponse(response, 'Failed to fetch ledger KPIs');
+  },
+
+  getLedgerMetadata: async (params = {}) => {
+    const response = await fetch(`${API_BASE_URL}/queries/ledger/metadata?${searchParams(params)}`);
+    return unwrapResponse(response, 'Failed to fetch ledger metadata');
+  },
 };
 
 export const consumeSSEStream = async (response, onMessage, onError, onComplete) => {

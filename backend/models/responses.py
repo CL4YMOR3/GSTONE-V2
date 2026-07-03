@@ -234,10 +234,10 @@ class RecoRunResponse(BaseModel):
 
 
 class MatchResultRow(BaseModel):
-    books_invoice_id: str
+    books_invoice_id: Optional[str] = None
     match_status: str           # MATCHED_STRICT | VALUE_MISMATCH | MISSING_IN_2B | ...
-    match_method: Optional[str]
-    matched_2b_invoice_id: Optional[str]
+    match_method: Optional[str] = None
+    matched_2b_invoice_id: Optional[str] = None
     books_supplier_gstin: Optional[str] = None
     books_supplier_name: Optional[str] = None
     books_invoice_number: Optional[str] = None

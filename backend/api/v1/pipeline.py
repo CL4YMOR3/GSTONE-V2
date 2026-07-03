@@ -295,6 +295,169 @@ async def finalize_audit(request: FinalizeAuditRequest):
     )
     store.save_certified(record)
 
+    # Insert ledger items to DB upon approval
+    import json
+    import datetime
+    from database import get_connection
+
+    now = datetime.datetime.now().isoformat()
+
+    if results_payload:
+        with get_connection() as conn:
+            # Derive the canonical invoice period from the raw upload data for this run.
+            # raw_books_uploads.return_period reflects the actual invoice month (derived from invoice dates),
+            # which may differ from request.period (the GST filing return period sent by the frontend).
+            # We use the dominant raw period so that clean books filter behaviour is consistent with raw books.
+            # Edge case #8: If two periods have the same row count (50-50 split), we pick the one that
+            # is numerically closest to (but not after) request.period, breaking ties deterministically.
+            raw_period_rows = conn.execute(
+                """
+                SELECT return_period, COUNT(*) as cnt
+                FROM raw_books_uploads
+                WHERE run_id = ? AND return_period IS NOT NULL
+                GROUP BY return_period
+                ORDER BY cnt DESC, return_period DESC
+                LIMIT 1
+                """,
+                (request.run_id,),
+            ).fetchone()
+            if raw_period_rows:
+                canonical_period = raw_period_rows["return_period"]
+            else:
+                # Edge case #7 (Reprocessed Run): No raw_books_uploads rows found for this new run_id.
+                # Derive canonical period from the clean/warning items directly.
+                clean_invs = results_payload.get("clean_invoices", results_payload.get("clean", []))
+                warn_invs = results_payload.get("warning_invoices", results_payload.get("warnings", []))
+                
+                # We need the col map to know which key holds the invoice date
+                c_map = results_payload.get("col_map", (run.result or {}).get("col_map", {})) if run else {}
+                d_col = c_map.get("invoice_date") or "invoice_date"
+                
+                date_counts = {}
+                from dateutil import parser
+                for row_data in clean_invs + warn_invs:
+                    if isinstance(row_data, dict):
+                        d_val = str(row_data.get(d_col) or row_data.get("invoice_date") or "").strip()
+                        if d_val:
+                            try:
+                                dt = parser.parse(d_val, dayfirst=True)
+                                period_str = dt.strftime("%Y-%m")
+                                date_counts[period_str] = date_counts.get(period_str, 0) + 1
+                            except Exception:
+                                pass
+                
+                if date_counts:
+                    # Sort by count desc, then period desc to break ties
+                    sorted_periods = sorted(date_counts.items(), key=lambda x: (x[1], x[0]), reverse=True)
+                    canonical_period = sorted_periods[0][0]
+                else:
+                    canonical_period = request.period
+                    print(
+                        f"WARNING [finalize_audit]: No raw_books_uploads rows AND no parsable dates found for run_id='{request.run_id}'. "
+                        f"Falling back to session period '{request.period}' for books_runs.return_period."
+                    )
+
+            # Industry-standard immutable versioning: Soft-delete (supersede) previous runs instead of hard deletion.
+            # This maintains a full forensic audit trail of all historical approvals.
+            conn.execute("""
+                UPDATE books_runs 
+                SET status = 'superseded' 
+                WHERE entity_id = ? AND return_period = ? AND run_id != ?
+            """, (request.entity_id, canonical_period, request.run_id))
+
+            # Align the current run's return_period with the canonical invoice period from raw books.
+            conn.execute("""
+                UPDATE books_runs SET return_period = ? WHERE run_id = ?
+            """, (canonical_period, request.run_id))
+            
+            # Clear items ONLY for the current run_id to ensure idempotency on the active transaction
+            conn.execute("DELETE FROM books_run_clean_items WHERE run_id = ?", (request.run_id,))
+            conn.execute("DELETE FROM books_run_warning_items WHERE run_id = ?", (request.run_id,))
+            conn.execute("DELETE FROM books_run_error_items WHERE run_id = ?", (request.run_id,))
+            
+            col_map = results_payload.get("col_map", (run.result or {}).get("col_map", {})) if run else {}
+            # Edge case #10: col_map may be empty or missing keys — fall back to
+            # scanning raw row keys directly so composite_key never silently uses empty strings.
+            inv_col = col_map.get("invoice_number") or "invoice_number"
+            date_col = col_map.get("invoice_date") or "invoice_date"
+            gstin_col = col_map.get("gstin") or "supplier_gstin"
+
+            import hashlib
+            def _hash_row(r_dict):
+                return hashlib.sha256(json.dumps(r_dict, sort_keys=True).encode('utf-8')).hexdigest()
+
+            def _composite_key(row: dict) -> str:
+                """Deterministic session-safe dedup key. Uses sha256 of full row JSON when
+                identity fields are absent — avoids Python hash() randomisation (#11)."""
+                # Try mapped column names first, then canonical fallback names
+                g = str(
+                    row.get(gstin_col) or row.get("supplier_gstin") or row.get("gstin") or ""
+                ).strip()
+                i = str(
+                    row.get(inv_col) or row.get("invoice_number") or row.get("bill_number") or ""
+                ).strip()
+                d = str(
+                    row.get(date_col) or row.get("invoice_date") or row.get("bill_date") or ""
+                ).strip()
+                if g or i:
+                    return f"{g}|{i}|{d}"
+                # No identity fields — use full-row content hash (deterministic across sessions)
+                return _hash_row(row)
+
+            clean_invoices = results_payload.get("clean_invoices", results_payload.get("clean", []))
+            seen_clean = set()
+            for row in clean_invoices:
+                if not isinstance(row, dict):
+                    continue
+                
+                composite_key = _composite_key(row)
+                if composite_key in seen_clean:
+                    continue
+                seen_clean.add(composite_key)
+                
+                g = str(row.get(gstin_col) or row.get("supplier_gstin") or "").strip()
+                i = str(row.get(inv_col) or row.get("invoice_number") or "").strip()
+                invoice_key = f"{g}_{i}" if g and i else None
+                row_hash = _hash_row(row)
+                
+                conn.execute(
+                    "INSERT OR IGNORE INTO books_run_clean_items (run_id, entity_id, invoice_key, row_hash, row_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (request.run_id, request.entity_id, invoice_key, row_hash, json.dumps(row), now),
+                )
+                
+            warning_invoices = results_payload.get("warning_invoices", results_payload.get("warnings", []))
+            seen_warn = set()
+            for row in warning_invoices:
+                if not isinstance(row, dict):
+                    continue
+                
+                composite_key = _composite_key(row)
+                if composite_key in seen_warn:
+                    continue
+                seen_warn.add(composite_key)
+                
+                g = str(row.get(gstin_col) or row.get("supplier_gstin") or "").strip()
+                i = str(row.get(inv_col) or row.get("invoice_number") or "").strip()
+                invoice_key = f"{g}_{i}" if g and i else None
+                row_hash = _hash_row(row)
+                
+                conn.execute(
+                    "INSERT OR IGNORE INTO books_run_warning_items (run_id, entity_id, invoice_key, row_hash, row_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (request.run_id, request.entity_id, invoice_key, row_hash, json.dumps(row), now),
+                )
+                
+            errors = results_payload.get("errors", [])
+            if not errors and ("identity_errors" in results_payload or "aggregation_errors" in results_payload):
+                errors = results_payload.get("identity_errors", []) + results_payload.get("aggregation_errors", [])
+                
+            for row in errors:
+                row_hash = _hash_row(row) if isinstance(row, dict) else _hash_row({"error": str(row)})
+                conn.execute(
+                    "INSERT OR IGNORE INTO books_run_error_items (run_id, entity_id, category, row_hash, row_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (request.run_id, request.entity_id, row.get("category") if isinstance(row, dict) else "ERROR", row_hash, json.dumps(row), now),
+                )
+            conn.commit()
+
     if run:
         run.status = "complete"
         store.save_run(run)

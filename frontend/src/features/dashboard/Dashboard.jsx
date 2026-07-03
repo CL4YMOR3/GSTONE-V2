@@ -23,23 +23,28 @@ const monthLabel = (period) => {
 
 const formatCompactCurrency = (value) => {
   const num = Number(value || 0);
-  const abs = Math.abs(num);
-  if (abs >= 10000000) return `₹${(num / 10000000).toFixed(2)}Cr`;
-  if (abs >= 100000) return `₹${(num / 100000).toFixed(2)}L`;
-  if (abs >= 1000) return `₹${(num / 1000).toFixed(1)}k`;
-  return `₹${num.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(num);
 };
 
-const KpiCard = ({ title, value, subtitle, icon: Icon, accent }) => (
-  <div className="app-kpi-card p-6">
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">{title}</span>
-      <Icon className={`h-4 w-4 ${accent}`} />
+const KpiCard = ({ title, value, subtitle, icon: Icon, accent }) => {
+  const len = String(value).length;
+  const textSize = len > 14 ? 'text-lg xl:text-xl' : len > 10 ? 'text-xl xl:text-2xl' : 'text-2xl md:text-3xl';
+  return (
+    <div className="app-kpi-card p-6">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">{title}</span>
+        <Icon className={`h-4 w-4 shrink-0 ${accent}`} />
+      </div>
+      <div className={`mt-3 ${textSize} font-black tracking-tight truncate ${accent}`} title={value}>{value}</div>
+      <p className="mt-2 text-xs font-medium text-stone-500">{subtitle}</p>
     </div>
-    <div className={`mt-3 text-4xl font-black tracking-tight ${accent}`}>{value}</div>
-    <p className="mt-2 text-xs font-medium text-stone-500">{subtitle}</p>
-  </div>
-);
+  );
+};
 
 const SectionCard = ({ title, subtitle, children, action }) => (
   <section className="app-panel p-6">

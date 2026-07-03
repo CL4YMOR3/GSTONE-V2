@@ -98,7 +98,7 @@ export const ReconciliationSummary = () => {
       { label: 'Unmatched / Missing', count: summaryStats?.missing || 0, color: 'red', percentage: summaryStats?.total ? Math.round(((summaryStats?.missing || 0) / summaryStats.total) * 100) : 0 }
    ];
 
-   const formatCurrency = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val || 0);
+   const formatCurrency = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
 
    const handleApply = () => {
       setActiveStep(3);

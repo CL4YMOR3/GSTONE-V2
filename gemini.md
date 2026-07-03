@@ -30,4 +30,3 @@ Production-Grade Architecture: When mutating files, write modern, type-safe, and
 
 4. Mandatory Finishing Signal
 Confirmation of Completion: Once you have successfully executed all file modifications, run all necessary build commands, and verified the task closure, you MUST output the exact phrase: "Job Complete". This serves as the explicit trigger to surrender control back to the user.
-

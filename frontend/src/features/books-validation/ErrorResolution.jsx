@@ -35,6 +35,7 @@ const FixModal = ({
   allowCrossGarden,
   setAllowCrossGarden,
   onClose,
+  onSkip,
   onApplySingle,
   onApplyBulk,
 }) => {
@@ -148,10 +149,10 @@ const FixModal = ({
               )}
 
               <button
-                onClick={onClose}
+                onClick={onSkip}
                 className="w-full py-3 px-4 text-stone-400 hover:text-stone-900 text-[10px] font-bold uppercase tracking-[0.15em] transition-colors mt-2"
               >
-                Cancel
+                Skip → Next
               </button>
             </div>
           </div>
@@ -183,6 +184,9 @@ export const ErrorResolution = () => {
   const [allowCrossGarden, setAllowCrossGarden] = React.useState(false);
   const [queuedErrorKeys, setQueuedErrorKeys] = React.useState({});
   const hydratedRunIdRef = React.useRef(null);
+  // Tracks the index (within enrichedErrors) of the currently open modal item
+  // so that next-item navigation advances sequentially, not back to index 0.
+  const modalIndexRef = React.useRef(-1);
 
   const summary = currentAuditResults?.summary;
   const colMap = currentAuditResults?.col_map || {};
@@ -298,19 +302,51 @@ export const ErrorResolution = () => {
   }, [modalError, bulkEligible, enrichedErrors, allowCrossGarden]);
 
   const openFixModal = (error) => {
+    // Record the position in enrichedErrors so sequential advance works correctly.
+    modalIndexRef.current = enrichedErrors.findIndex(
+      (e) => getErrorKey(e) === getErrorKey(error)
+    );
     setModalError(error);
     setCandidateValue(buildFixSuggestion(error)?.value || '');
     setAllowCrossGarden(false);
   };
 
   const closeFixModal = () => {
+    modalIndexRef.current = -1;
     setModalError(null);
     setCandidateValue('');
     setAllowCrossGarden(false);
   };
 
   const openNextError = React.useCallback((resolvedKeys) => {
-    const nextError = activeErrors.find((item) => !resolvedKeys.includes(getErrorKey(item)));
+    // Search forward from the item AFTER the currently open modal item.
+    // Fall back to a full scan if the ref is stale or unset.
+    const startIdx = modalIndexRef.current >= 0 ? modalIndexRef.current + 1 : 0;
+    const resolvedSet = new Set(resolvedKeys);
+
+    // First pass: look at items after the current index
+    let nextError = null;
+    for (let i = startIdx; i < enrichedErrors.length; i++) {
+      const key = getErrorKey(enrichedErrors[i]);
+      if (!resolvedSet.has(key) && !queuedErrorKeys[key]) {
+        nextError = enrichedErrors[i];
+        modalIndexRef.current = i;
+        break;
+      }
+    }
+
+    // Second pass: wrap around to the beginning if nothing found after current
+    if (!nextError) {
+      for (let i = 0; i < startIdx; i++) {
+        const key = getErrorKey(enrichedErrors[i]);
+        if (!resolvedSet.has(key) && !queuedErrorKeys[key]) {
+          nextError = enrichedErrors[i];
+          modalIndexRef.current = i;
+          break;
+        }
+      }
+    }
+
     if (!nextError) {
       closeFixModal();
       return;
@@ -319,7 +355,13 @@ export const ErrorResolution = () => {
     setModalError(nextError);
     setCandidateValue(buildFixSuggestion(nextError)?.value || '');
     setAllowCrossGarden(false);
-  }, [activeErrors]);
+  }, [enrichedErrors, queuedErrorKeys]);
+
+  // Skip the current modal item and advance to the next one without resolving it.
+  const skipCurrentError = React.useCallback(() => {
+    if (!modalError) return;
+    openNextError([getErrorKey(modalError)]);
+  }, [modalError, openNextError]);
 
   const applySingleFix = async () => {
     if (!modalError || !candidateValue) {
@@ -563,6 +605,7 @@ export const ErrorResolution = () => {
         allowCrossGarden={allowCrossGarden}
         setAllowCrossGarden={setAllowCrossGarden}
         onClose={closeFixModal}
+        onSkip={skipCurrentError}
         onApplySingle={applySingleFix}
         onApplyBulk={applyBulkFix}
       />

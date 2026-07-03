@@ -16,6 +16,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from config import MAX_PIPELINE_WORKERS
 import session_store as store
+import database as db
 from models.requests import PipelineRunRequest, SubmitFixesRequest, FixAction
 from models.responses import ErrorRow, RunSummary, GardenStats
 from utils.serialization import sanitize_nan
@@ -184,12 +185,16 @@ def _serialize_warning(w) -> Dict[str, Any]:
 
 
 def _run_pipeline_sync(
-    garden_files: List[tuple],   # [(file_path, sheet_name, garden_name, header_row), ...]
+    garden_files: List[tuple],
     col_map: Dict[str, str],
     business_context: str,
     company_gstins: List[str],
     fix_actions: List[Dict[str, Any]],
+    run_id: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    return_period: Optional[str] = None,
 ) -> Dict[str, Any]:
+    kwargs = {"run_id": run_id, "entity_id": entity_id, "return_period": return_period}
     """
     Pure-Python re-implementation of multi_garden_worker logic (no Qt).
     Mirrors the multi_garden_worker.run() steps exactly.
@@ -245,6 +250,46 @@ def _run_pipeline_sync(
         all_dfs.append(df)
         total_rows += len(df)
         source_files.append(original_filename)
+
+        # Persist raw rows (non-fatal)
+        _run_id = kwargs.get("run_id")
+        if _run_id:
+            try:
+                raw_df = df.drop(columns=[GARDEN_COL], errors="ignore").copy()
+                invoice_date_raw_col = col_map.get("invoice_date")
+                if invoice_date_raw_col and invoice_date_raw_col in raw_df.columns:
+                    # Try dayfirst=True first (Indian/UK format DD-MM-YYYY), then
+                    # fall back to month-first parsing for US-style MM/DD/YYYY rows
+                    parsed_dates = pd.to_datetime(raw_df[invoice_date_raw_col], dayfirst=True, errors="coerce")
+                    still_null = parsed_dates.isna()
+                    if still_null.any():
+                        fallback = pd.to_datetime(
+                            raw_df.loc[still_null, invoice_date_raw_col],
+                            dayfirst=False, errors="coerce"
+                        )
+                        parsed_dates = parsed_dates.where(~still_null, fallback)
+                    raw_df["_return_period"] = parsed_dates.dt.strftime("%Y-%m")
+                    # Remaining NaT rows fall back to the session return_period
+                    raw_df["_return_period"] = raw_df["_return_period"].fillna(kwargs.get("return_period"))
+                    # Sanity log: warn if more than 20% of rows couldn't be parsed
+                    null_pct = raw_df["_return_period"].isna().mean()
+                    if null_pct > 0.2:
+                        print(f"WARNING: {null_pct:.0%} of invoice dates could not be parsed for garden '{garden_name}'. Falling back to session period for those rows.")
+                else:
+                    # No mapped invoice_date column — use session period as fallback for all rows
+                    print(f"WARNING: 'invoice_date' not in col_map for garden '{garden_name}'. Using session period '{kwargs.get('return_period')}' for all raw rows.")
+                    raw_df["_return_period"] = kwargs.get("return_period")
+                raw_rows = _serialize_df(raw_df)
+                db.save_raw_books_rows(
+                    run_id=_run_id,
+                    entity_id=kwargs.get("entity_id"),
+                    return_period=kwargs.get("return_period"),
+                    garden_name=garden_name,
+                    original_filename=original_filename,
+                    rows=raw_rows,
+                )
+            except Exception as _raw_err:
+                print(f"DEBUG: raw_books_uploads save failed (non-fatal): {_raw_err}")
 
     combined_df = pd.concat(all_dfs, ignore_index=True)
     print(f"DEBUG: Combined DF size: {len(combined_df)} rows")
@@ -414,6 +459,16 @@ def _run_pipeline_sync(
     clean_mask = ~validated_df["invoice_key"].isin(warning_keys)
     clean_invoices_df = validated_df[clean_mask].copy()
     warning_invoices_df = validated_df[~clean_mask].copy()
+
+    from collections import defaultdict
+    warn_msgs = defaultdict(list)
+    for w in warnings:
+        warn_msgs[w.invoice_key].append(w.warning_message)
+        
+    if not warning_invoices_df.empty:
+        warning_invoices_df['_reasons'] = warning_invoices_df['invoice_key'].map(
+            lambda k: ' | '.join(warn_msgs.get(k, []))
+        )
     
     print(f"DEBUG: Pipeline Results -> Clean: {len(clean_invoices_df)}, Warnings: {len(warning_invoices_df)}, Errors: {len(aggregation_errors)}")
 
@@ -533,6 +588,7 @@ async def _start_run_stream_with_sources(request: PipelineRunRequest, garden_fil
         _run_pipeline_sync,
         garden_files, request.col_map,
         request.business_context, request.company_gstins, fix_actions_raw,
+        run_id, request.entity_id, request.period,
     )
 
     phases = [

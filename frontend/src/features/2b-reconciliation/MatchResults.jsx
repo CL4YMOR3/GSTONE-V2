@@ -59,11 +59,12 @@ const formatCurrency = (value) => {
 const formatCompactCurrency = (value) => {
   if (value === null || value === undefined || value === '') return '—';
   const num = Number(value);
-  const absNum = Math.abs(num);
-  if (absNum >= 10000000) return `₹${(num / 10000000).toFixed(2)}Cr`;
-  if (absNum >= 100000) return `₹${(num / 100000).toFixed(2)}L`;
-  if (absNum >= 1000) return `₹${(num / 1000).toFixed(1)}k`;
-  return `₹${num.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(num);
 };
 
 const formatDate = (value) => {

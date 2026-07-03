@@ -19,6 +19,7 @@ from models.responses import (
 )
 import session_store as store
 from services import reco_service
+from database import get_connection, _load
 
 router = APIRouter(prefix="/reco", tags=["Reconciliation"])
 
@@ -219,56 +220,38 @@ async def get_reco_results(
     if reco.status not in ("complete", "failed"):
         return ApiResponse.ok({"reco_id": reco_id, "status": reco.status})
 
-    match_results = (reco.match_results or {}).get("match_results", [])
-    unmatched_2b = (reco.match_results or {}).get("unmatched_2b", [])
     total_books = (reco.match_results or {}).get("total_books", 0)
     total_2b = (reco.match_results or {}).get("total_2b", 0)
-    from core.reco_2b.models import Canonical2BInvoice
-
-    canonical_by_identity = {}
-    for raw_invoice in (reco.canonical_invoices or []):
-        try:
-            canonical_invoice = Canonical2BInvoice.from_dict(raw_invoice)
-            canonical_by_identity[canonical_invoice.get_identity_key_string()] = raw_invoice
-        except Exception:
-            continue
-    missing_in_books_rows = []
-    for identity_key in unmatched_2b:
-        canonical_invoice = canonical_by_identity.get(identity_key)
-        if not canonical_invoice:
-            continue
-        missing_in_books_rows.append({
-            "books_invoice_id": identity_key,
-            "match_status": "MISSING_IN_BOOKS",
-            "match_method": None,
-            "matched_2b_invoice_id": identity_key,
-            "books_supplier_gstin": None,
-            "books_supplier_name": None,
-            "books_invoice_number": None,
-            "books_invoice_date": None,
-            "books_taxable_value": None,
-            "books_total_gst": None,
-            "books_invoice_value": None,
-            "canonical_supplier_gstin": canonical_invoice.get("supplier_gstin"),
-            "canonical_supplier_name": canonical_invoice.get("supplier_legal_name"),
-            "canonical_invoice_number": canonical_invoice.get("invoice_number"),
-            "canonical_invoice_date": canonical_invoice.get("invoice_date"),
-            "canonical_taxable_value": canonical_invoice.get("taxable_value"),
-            "canonical_total_gst": canonical_invoice.get("total_gst_amount"),
-            "canonical_invoice_value": canonical_invoice.get("invoice_value"),
-            "candidate_count": 0,
-            "value_deltas": [],
-            "mismatch_reasons": [],
-        })
-    all_rows = [*match_results, *missing_in_books_rows]
-
-    # Optional status filter
-    if status:
-        all_rows = [r for r in all_rows if r.get("match_status") == status]
-
-    total = len(all_rows)
-    start = (page - 1) * limit
-    paged = all_rows[start:start + limit]
+    
+    with get_connection() as conn:
+        where_clauses = ["reco_id = ?"]
+        params = [reco_id]
+        if status:
+            where_clauses.append("match_status = ?")
+            params.append(status)
+            
+        where_sql = " AND ".join(where_clauses)
+        
+        # Get counts
+        total = conn.execute(f"SELECT count(*) FROM reco_match_items WHERE {where_sql}", params).fetchone()[0]
+        unmatched_2b_count = conn.execute(
+            "SELECT count(*) FROM reco_match_items WHERE reco_id = ? AND match_status = 'MISSING_IN_BOOKS'", 
+            (reco_id,)
+        ).fetchone()[0]
+        
+        # Get paginated data
+        start = (page - 1) * limit
+        rows = conn.execute(
+            f"SELECT row_json, match_status, carry_forward_flag FROM reco_match_items WHERE {where_sql} ORDER BY id ASC LIMIT ? OFFSET ?",
+            (*params, limit, start)
+        ).fetchall()
+        
+    paged = []
+    for row in rows:
+        item = _load(row["row_json"], {})
+        if row["carry_forward_flag"]:
+            item["carried_forward_from_period"] = item.get("carried_forward_from_period")
+        paged.append(MatchResultRow(**item))
 
     return ApiResponse.ok(RecoResultsResponse(
         reco_id=reco_id,
@@ -277,8 +260,8 @@ async def get_reco_results(
         total=total,
         page=page,
         limit=limit,
-        results=[MatchResultRow(**r) for r in paged],
-        unmatched_2b_count=len(unmatched_2b),
+        results=paged,
+        unmatched_2b_count=unmatched_2b_count,
     ).model_dump())
 
 

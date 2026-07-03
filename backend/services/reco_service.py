@@ -68,6 +68,23 @@ def _get_resolution_stat(stats: Any, preferred: str, fallback: str) -> int:
         return 0
 
 
+def _derive_reco_period(canonical_invoices: List[Dict[str, Any]], fallback: Optional[str] = None) -> Optional[str]:
+    period_counts: Dict[str, int] = {}
+    for row in canonical_invoices or []:
+        if not isinstance(row, dict):
+            continue
+        invoice_dt = _to_date(row.get("invoice_date") or row.get("source_document_date"))
+        if not invoice_dt:
+            continue
+        period_key = invoice_dt.strftime("%Y-%m")
+        period_counts[period_key] = period_counts.get(period_key, 0) + 1
+
+    if not period_counts:
+        raise ValueError("Unable to parse valid invoice dates from 2B payload. Cannot determine filing period.")
+
+    return sorted(period_counts.items(), key=lambda item: (item[1], item[0]), reverse=True)[0][0]
+
+
 def _deserialize_books_invoices(
     clean_invoices: List[Dict[str, Any]],
     col_map: Dict[str, str],
@@ -286,6 +303,9 @@ def _run_reconciliation_sync(
             "books_invoice_number": getattr(books_invoice, "invoice_number", None),
             "books_invoice_date": books_invoice.invoice_date.isoformat() if books_invoice and books_invoice.invoice_date else None,
             "books_taxable_value": float(books_invoice.taxable_value) if books_invoice else None,
+            "books_igst_amount": float(books_invoice.igst_amount) if books_invoice else None,
+            "books_cgst_amount": float(books_invoice.cgst_amount) if books_invoice else None,
+            "books_sgst_amount": float(books_invoice.sgst_amount) if books_invoice else None,
             "books_total_gst": float(books_invoice.total_gst_amount) if books_invoice else None,
             "books_invoice_value": float(books_invoice.invoice_value) if books_invoice else None,
             "canonical_supplier_gstin": getattr(canonical_invoice, "supplier_gstin", None),
@@ -293,6 +313,9 @@ def _run_reconciliation_sync(
             "canonical_invoice_number": getattr(canonical_invoice, "invoice_number", None),
             "canonical_invoice_date": canonical_invoice.invoice_date.isoformat() if canonical_invoice and canonical_invoice.invoice_date else None,
             "canonical_taxable_value": float(canonical_invoice.taxable_value) if canonical_invoice else None,
+            "canonical_igst_amount": float(canonical_invoice.igst_amount) if canonical_invoice else None,
+            "canonical_cgst_amount": float(canonical_invoice.cgst_amount) if canonical_invoice else None,
+            "canonical_sgst_amount": float(canonical_invoice.sgst_amount) if canonical_invoice else None,
             "canonical_total_gst": float(canonical_invoice.total_gst_amount) if canonical_invoice else None,
             "canonical_invoice_value": float(canonical_invoice.invoice_value) if canonical_invoice else None,
             "candidate_count": getattr(mr, "candidate_count", 0),
@@ -520,11 +543,10 @@ async def run_reconciliation(reco_id: str, parent_run_id: str) -> None:
         raise ValueError(f"Parent run '{parent_run_id}' must be approved before GSTR-2B reconciliation")
     if not run.result and not run.handoff_workbook_path and not store.get_latest_export_for_run(parent_run_id, approved_only=True):
         raise ValueError(f"Parent run '{parent_run_id}' has no books result")
-
+    canonical_invoices = reco.canonical_invoices
     reco.status = "running"
     store.save_reco(reco)
     books_invoices = _load_books_invoices_for_run(parent_run_id, run)
-    canonical_invoices = reco.canonical_invoices
 
     loop = asyncio.get_event_loop()
     loop.run_in_executor(
@@ -539,9 +561,16 @@ def _reco_and_store(reco_id, books_invoices, canonical_invoices, parent_run_id):
         result = _run_reconciliation_sync(books_invoices, canonical_invoices, parent_run_id, reco_id)
         reco = store.get_reco(reco_id)
         if reco:
+            import database as db
+            canonical_period = _derive_reco_period(canonical_invoices, getattr(reco, 'declared_period', None))
+            entity_id = getattr(reco, 'entity_id', None) or getattr(reco, 'declared_gstin', None)
+            if entity_id and canonical_period:
+                db.supersede_previous_reco_runs(entity_id, canonical_period, reco_id)
             reco.match_results = result
             reco.status = "complete"
             store.save_reco(reco)
+            # ── Cross-period carry-forward resolution ──────────────────────────
+            _resolve_carry_forward(reco_id, reco, canonical_invoices)
     except Exception as exc:
         import traceback
         reco = store.get_reco(reco_id)
@@ -549,6 +578,45 @@ def _reco_and_store(reco_id, books_invoices, canonical_invoices, parent_run_id):
             reco.status = "failed"
             reco.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
             store.save_reco(reco)
+
+
+def _normalize_key(gstin: str, inv_no: str) -> str:
+    return f"{(gstin or '').strip().upper()}||{(inv_no or '').strip().upper()}"
+
+
+def _resolve_carry_forward(reco_id: str, reco: Any, canonical_invoices: List[Dict[str, Any]]) -> None:
+    """Match historical unmatched records against current-period 2B data."""
+    import database as db
+
+    entity_id = getattr(reco, "entity_id", None) or getattr(reco, "declared_gstin", None)
+    current_period = getattr(reco, "declared_period", None) or getattr(reco, "return_period", None)
+    if not entity_id or not current_period:
+        return
+
+    historical = db.get_unmatched_for_carry_forward(entity_id, exclude_period=current_period)
+    if not historical:
+        return
+
+    # Build lookup index on (gstin, invoice_number) from current 2B
+    canonical_index: Dict[str, Dict[str, Any]] = {}
+    for inv in canonical_invoices:
+        key = _normalize_key(inv.get("supplier_gstin", ""), inv.get("invoice_number", ""))
+        if key:
+            canonical_index[key] = inv
+
+    resolved_count = 0
+    for hist_row in historical:
+        match_key = _normalize_key(hist_row.get("supplier_gstin", ""), hist_row.get("invoice_number", ""))
+        if match_key and match_key in canonical_index:
+            try:
+                db.mark_carry_forward_resolved(hist_row["id"], current_period)
+                resolved_count += 1
+            except Exception as _cf_err:
+                print(f"DEBUG: carry-forward resolve failed for id={hist_row['id']}: {_cf_err}")
+
+    if resolved_count:
+        print(f"DEBUG: Carry-forward: resolved {resolved_count} historical unmatched records for entity={entity_id} period={current_period}")
+
 
 
 async def export_reco_results_workbook(reco_id: str) -> str:

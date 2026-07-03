@@ -28,10 +28,10 @@ export const CertificationPanel = () => {
     const stats = React.useMemo(() => {
         if (!currentAuditResults) return { clean: 0, warnings: 0, errors: 0, total: 0 };
         return {
-            clean: currentAuditResults.clean?.length || 0,
+            clean: currentAuditResults.clean_invoices?.length || 0,
             warnings: currentAuditResults.warnings?.length || 0,
             errors: currentAuditResults.errors?.length || 0,
-            total: (currentAuditResults.clean?.length || 0) +
+            total: (currentAuditResults.clean_invoices?.length || 0) +
                 (currentAuditResults.warnings?.length || 0) +
                 (currentAuditResults.errors?.length || 0)
         };
@@ -44,7 +44,7 @@ export const CertificationPanel = () => {
     const hasAuditData = Boolean(
         currentRunId &&
         currentAuditResults?.summary &&
-        ((currentAuditResults.clean?.length || 0) +
+        ((currentAuditResults.clean_invoices?.length || 0) +
             (currentAuditResults.warnings?.length || 0) +
             (currentAuditResults.errors?.length || 0) > 0)
     );
@@ -60,7 +60,7 @@ export const CertificationPanel = () => {
                 run_id: currentRunId,
                 summary: currentAuditResults.summary,
                 results: {
-                    clean: currentAuditResults.clean,
+                    clean: currentAuditResults.clean_invoices,
                     warnings: currentAuditResults.warnings,
                     errors: currentAuditResults.errors
                 },

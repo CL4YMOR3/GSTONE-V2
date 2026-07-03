@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from models.requests import ExportRequest
 from models.responses import ApiResponse, ExportResponse, ApproveResponse
 import session_store as store
+import database as db
 from services.export_service import generate_export
 
 router = APIRouter(tags=["Export"])
@@ -61,6 +62,9 @@ async def approve_export(export_id: str):
 
     store.mark_export_approved(export_id)
     record.approved = True
+    
+    # Promote clean items to canonical ledger
+    db.promote_run_to_facts(record.run_id)
 
     # Also mark run as approved
     run = store.get_run(record.run_id)
